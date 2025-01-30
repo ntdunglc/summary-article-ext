@@ -1,0 +1,41 @@
+body {
+    font-family: Arial, sans-serif;
+    padding: 20px;
+    max-width: 400px;
+    background-color: #f9f9f9;
+  }
+  h2 {
+    color: #333;
+  }
+  label {
+    font-weight: bold;
+  }
+  select,
+  button {
+    width: 100%;
+    margin-top: 10px;
+    padding: 10px;
+    border-radius: 5px;
+    border: 1px solid #ccc;
+  }
+  button {
+    background-color: #007bff;
+    color: white;
+    cursor: pointer;
+    border: none;
+  }
+  button:hover {
+    background-color: #0056b3;
+  }
+  #resetBtn {
+    background-color: #dc3545;
+  }
+  #resetBtn:hover {
+    background-color: #b21f2d;
+  }
+  #status {
+    margin-top: 15px;
+    font-weight: bold;
+    color: green;
+  }
+  

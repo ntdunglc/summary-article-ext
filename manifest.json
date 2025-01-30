@@ -1,25 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Article & Video Summarizer",
-  "version": "1.0.0",
-  "description": "Summarizes articles and YouTube videos using Claude AI",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "tabs"
-  ],
+  "version": "1.1.0",
+  "description": "Summarizes articles and YouTube videos using selected AI providers",
+  "permissions": ["activeTab", "scripting", "tabs", "storage", "clipboardWrite"],
   "action": {
     "default_icon": "icon.png"
   },
   "background": {
     "service_worker": "background.js"
   },
-  "web_accessible_resources": [{
-    "resources": ["Readability.js"],
-    "matches": ["<all_urls>"]
-  }],
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": ["Readability.js"],
+      "matches": ["<all_urls>"]
+    }
+  ],
   "host_permissions": [
     "https://claude.ai/*",
-    "https://www.youtube.com/*"
+    "https://chat.deepseek.com/*",
+    "https://chatgpt.com/*",
+    "https://www.youtube.com/*",
+    "https://news.ycombinator.com/*"
   ]
 }

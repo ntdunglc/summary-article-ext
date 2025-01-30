@@ -1,3 +1,10 @@
+const SERVICE_URLS = {
+  claude: 'https://claude.ai/new',
+  deepseek: 'https://chat.deepseek.com/',
+  chatgpt: 'https://chatgpt.com/'
+};
+
+
 // Prompt templates
 const YOUTUBE_PROMPT = `Your output should use the following template:
 
@@ -162,57 +169,65 @@ chrome.action.onClicked.addListener(async (tab) => {
   }
 });
 
+// Update message listener to handle service selection
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'extractedText') {
     extractedText = {
       content: message.text,
       contentType: message.contentType
     };
-    
+
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const currentTab = tabs[0];
-      chrome.tabs.create({ 
-        url: 'https://claude.ai/new',
-        index: currentTab.index + 1
+      chrome.storage.sync.get({ service: 'claude' }, (result) => {
+        const service = result.service.toLowerCase();
+        const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+
+        chrome.tabs.create({
+          url: url,
+          index: tabs[0].index + 1
+        });
       });
     });
   }
 });
 
+// Update tab updated listener to handle both services
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status === 'complete' && tab.url.includes('claude.ai/new')) {
-    if (extractedText) {
-      chrome.scripting.executeScript({
-        target: { tabId: tabId },
-        func: (data, youtubePrompt, articlePrompt, hnPrompt) => {
-          const promptTemplate = data.contentType === 'youtube' ? youtubePrompt + data.content :
-                               data.contentType === 'hn' ? hnPrompt + data.content :
-                               articlePrompt + data.content;
-
-          const textareas = document.querySelectorAll('[contenteditable="true"]');
-          if (textareas && textareas.length > 0) {
-            const textarea = textareas[0];
-            textarea.textContent = promptTemplate;
-            textarea.dispatchEvent(new Event('input', { bubbles: true }));
-            
-            setTimeout(() => {
-              const sendButton = document.querySelector('button[aria-label="Send Message"]') ||
-                              document.querySelector('button.bg-accent-main-100');
-              if (sendButton) sendButton.click();
-            }, 1000);
-          }
-        },
-        args: [extractedText, YOUTUBE_PROMPT, ARTICLE_PROMPT, HN_DISCUSSION_PROMPT]
-      });
-      extractedText = '';
+  if (changeInfo.status === 'complete' && extractedText) {
+    let service;
+    if (tab.url.includes('claude.ai/new')) {
+      service = 'claude';
+    } else if (tab.url.includes('chat.deepseek.com')) {
+      service = 'deepseek';
+    } else if (tab.url.includes('chatgpt.com')) {
+      service = 'chatgpt';
+    } else {
+      return;
     }
+
+    const prompts = {
+      youtube: YOUTUBE_PROMPT,
+      article: ARTICLE_PROMPT,
+      hn: HN_DISCUSSION_PROMPT
+    };
+
+    const inputFunction = service === 'claude' ? inputTextToClaude :
+      service === 'deepseek' ? inputTextToDeepSeek : inputTextToChatGPT;
+
+    chrome.scripting.executeScript({
+      target: { tabId: tabId },
+      func: inputFunction,
+      args: [extractedText, prompts]
+    });
+
+    extractedText = '';
   }
 });
 
 function extractYouTubeTranscript() {
   const clickButtonWithText = async (text) => {
     const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span'));
-    const button = elements.find(el => 
+    const button = elements.find(el =>
       el.textContent?.trim().toLowerCase() === text.toLowerCase()
     );
     if (button) {
@@ -239,7 +254,7 @@ function extractYouTubeTranscript() {
       menuButton.click();
 
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       if (!await clickButtonWithText('Show transcript')) {
         if (!await clickButtonWithText('Open transcript')) {
           throw new Error('Transcript button not found');
@@ -296,7 +311,7 @@ function extractArticle() {
     const documentClone = document.cloneNode(true);
     const reader = new Readability(documentClone);
     const article = reader.parse();
-    
+
     if (article && article.textContent) {
       const metadata = {
         title: article.title || document.title,
@@ -337,9 +352,8 @@ const extractHNDiscussion = () => {
 
   const comments = [];
   document.querySelectorAll('.comtr').forEach(comment => {
-    // Get indentation level
     const indent = parseInt(comment.querySelector('.ind img')?.width || '0');
-    const level = indent / 40; // HN uses 40px per indent level
+    const level = indent / 40;
 
     const username = comment.querySelector('.hnuser')?.innerText || '';
     const text = comment.querySelector('.commtext')?.innerText || '';
@@ -355,13 +369,17 @@ const extractHNDiscussion = () => {
     });
   });
 
-  // Convert to a readable format with proper indentation
+  // Convert to a readable format with preserved indentation
   let formattedDiscussion = `${mainPost.title}\n${mainPost.points}\n${mainPost.url}\n\n`;
-  
+
   comments.forEach(comment => {
-    const indent = '  '.repeat(comment.level);
+    // Use non-breaking spaces for indentation
+    const indent = '\u00A0\u00A0'.repeat(comment.level);
     formattedDiscussion += `${indent}@${comment.username} ${comment.points} ${comment.age}\n`;
-    formattedDiscussion += comment.text.split('\n').map(line => `${indent}${line}`).join('\n');
+    // Preserve indentation for multi-line comments
+    formattedDiscussion += comment.text.split('\n')
+      .map(line => `${indent}${line}`)
+      .join('\n');
     formattedDiscussion += '\n\n';
   });
 
@@ -372,21 +390,94 @@ const extractHNDiscussion = () => {
   });
 };
 
-function inputTextToClaudeTextarea(extractedData) {
-  const promptTemplate = extractedData.contentType === 'youtube' ? 
-    YOUTUBE_PROMPT + extractedData.content :
-    ARTICLE_PROMPT + extractedData.content;
+function inputTextToClaude(extractedData, prompts) {
+  const promptTemplate = prompts[extractedData.contentType] + extractedData.content;
 
   const textareas = document.querySelectorAll('[contenteditable="true"]');
   if (textareas && textareas.length > 0) {
     const textarea = textareas[0];
-    textarea.textContent = promptTemplate;
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    
+    // Convert text to HTML paragraphs, preserving empty lines
+    const formattedHtml = promptTemplate
+      .split('\n')
+      .map(line => {
+        if (line.trim() === '') {
+          return '<div><br></div>';  // Empty line
+        }
+        // Preserve leading spaces using non-breaking spaces
+        const leadingSpaces = line.match(/^\s*/)[0].length;
+        const spacedLine = '\u00A0'.repeat(leadingSpaces) + line.trimLeft();
+        return `<div>${spacedLine}</div>`;
+      })
+      .join('');
+
+    // Set the formatted HTML content
+    textarea.innerHTML = formattedHtml;
+
+    // Click send button after a short delay
     setTimeout(() => {
       const sendButton = document.querySelector('button[aria-label="Send Message"]') ||
-                        document.querySelector('button.bg-accent-main-100');
+        document.querySelector('button.bg-accent-main-100');
       if (sendButton) sendButton.click();
     }, 1000);
   }
+}
+
+function inputTextToDeepSeek(extractedData, prompts) {
+  const promptTemplate = prompts[extractedData.contentType] + extractedData.content;
+
+  // Find the chat input textarea
+  const textarea = document.getElementById('chat-input');
+  if (textarea) {
+    // Set the text content
+    textarea.value = promptTemplate;
+
+    // Trigger input event to ensure UI updates
+    const inputEvent = new Event('input', { bubbles: true });
+    textarea.dispatchEvent(inputEvent);
+
+    // Find and click the send button
+    setTimeout(() => {
+      const sendButton = Array.from(document.querySelectorAll('button, [role="button"]'))
+        .find(el => {
+          const buttonText = el.textContent?.trim();
+          return buttonText === 'DeepThink (R1)' || buttonText === 'Search';
+        });
+
+      if (sendButton) {
+        sendButton.click();
+      }
+    }, 1000);
+  }
+}
+
+function inputTextToChatGPT(extractedData, prompts) {
+  const promptTemplate = prompts[extractedData.contentType] + extractedData.content;
+  setTimeout(() => {
+    const textarea = document.querySelector('#prompt-textarea');
+    console.log(promptTemplate, textarea)
+    if (textarea) {
+      // Convert text to HTML paragraphs, preserving empty lines
+      const formattedHtml = promptTemplate
+        .split('\n')
+        .map(line => {
+          if (line.trim() === '') {
+            return '<div><br></div>';  // Empty line
+          }
+          // Preserve leading spaces using non-breaking spaces
+          const leadingSpaces = line.match(/^\s*/)[0].length;
+          const spacedLine = '\u00A0'.repeat(leadingSpaces) + line.trimLeft();
+          return `<div>${spacedLine}</div>`;
+        })
+        .join('');
+
+      // Set the formatted HTML content
+      textarea.innerHTML = formattedHtml;
+
+      setTimeout(() => {
+        const sendButton = document.querySelector('button[aria-label="Send prompt"]');
+        if (sendButton) sendButton.click();
+      }, 1000);
+    }
+  }, 1000);
+
 }
