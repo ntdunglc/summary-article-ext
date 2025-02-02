@@ -2,21 +2,28 @@ window.articleExtractor = {
     getPrompt() {
         return `Please read the article provided and create a concise, **proportionate** overview. Structure your response in with these sections:
   
-  1. **Key Points**
+  1. **Metadata**
+    - Title:
+    - Source:
+    - Author:
+    - Published:
+    - URL:
+
+  2. **Key Points**
      - The most important takeaways from the article.
   
-  2. **Summary** *(proportional to length)*  
+  3. **Summary** *(proportional to length)*
      - Overview of main content and arguments.
   
-  3. **Context & Background**  
+  4. **Context & Background**
      - Relevant historical or thematic information.
   
-  4. **Analysis**  
+  5. **Analysis**
      - Main arguments and evidence
      - Potential biases or limitations
      - Writing style and tone
   
-  5. **Implications**  
+  6. **Implications**
      - Broader significance or impact
   
   **Here is the article:**`;

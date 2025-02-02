@@ -1,7 +1,8 @@
 const SERVICE_URLS = {
   claude: 'https://claude.ai/new',
   deepseek: 'https://chat.deepseek.com/',
-  chatgpt: 'https://chatgpt.com/'
+  chatgpt: 'https://chatgpt.com/',
+  gemini: 'https://aistudio.google.com/prompts/new_chat'
 };
 
 const EXTRACTORS = {
@@ -14,7 +15,8 @@ const EXTRACTORS = {
 const HANDLERS = {
   claude: 'claudeBot',
   deepseek: 'deepseekBot',
-  chatgpt: 'chatgptBot'
+  chatgpt: 'chatgptBot',
+  gemini: 'geminiBot'
 };
 
 let extractedText = '';
@@ -31,19 +33,25 @@ chrome.action.onClicked.addListener(async (tab) => {
   } else {
     siteType = 'article';
   }
+  if (siteType == 'article') {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['Readability.js']
+    });
+  }
 
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-  files: [EXTRACTORS[siteType]]
-});
+    files: [EXTRACTORS[siteType]]
+  });
 
   await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-  func: (extractorName) => {
-    window[extractorName].extract();
-  },
-  args: [siteType + 'Extractor']
-});
+    func: (extractorName) => {
+      window[extractorName].extract();
+    },
+    args: [siteType + 'Extractor']
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -73,6 +81,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       service = 'deepseek';
     } else if (tab.url.includes('chatgpt.com')) {
       service = 'chatgpt';
+    } else if (tab.url.includes('aistudio.google.com')) {
+      service = 'gemini';
     } else {
       return;
     }
