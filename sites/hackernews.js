@@ -5,6 +5,9 @@ window.hackernewsExtractor = {
   - Title of the post
   - Key context and what sparked the discussion
   
+  ### Key Points
+  - Summary for each key point
+
   ### Major Discussion Threads
   For each significant discussion branch (>10 upvotes or significant discussion depth):
   - Main argument/point being discussed

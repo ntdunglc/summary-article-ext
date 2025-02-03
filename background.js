@@ -9,7 +9,8 @@ const EXTRACTORS = {
   youtube: 'sites/youtube.js',
   article: 'sites/article.js',
   hackernews: 'sites/hackernews.js',
-  amazon: 'sites/amazon.js'
+  amazon: 'sites/amazon.js',
+  leetcode: 'sites/leetcode.js'
 };
 
 const HANDLERS = {
@@ -30,6 +31,8 @@ chrome.action.onClicked.addListener(async (tab) => {
     siteType = 'hackernews';
   } else if (tab.url.includes('amazon.com')) {
     siteType = 'amazon';
+  } else if (tab.url.includes('leetcode.com')) {
+    siteType = 'leetcode';
   } else {
     siteType = 'article';
   }

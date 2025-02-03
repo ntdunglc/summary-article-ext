@@ -30,6 +30,8 @@
     "https://aistudio.google.com/*",
     "https://www.youtube.com/*",
     "https://news.ycombinator.com/*",
-    "https://*.amazon.com/*"
+    "https://*.amazon.com/*",
+    "https://leetcode.com/*",
+    "https://*.leetcode.com/*"
   ]
 }
