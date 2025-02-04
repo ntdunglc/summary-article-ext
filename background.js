@@ -68,7 +68,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         chrome.tabs.create({
           url: url,
-          index: tabs[0].index + 1
+          index: tabs[0].index + 1,
+          active: false
         });
       });
     });
