@@ -1,32 +1,32 @@
 window.articleExtractor = {
     getPrompt() {
-        return `Please read the article provided and create a concise, **proportionate** overview. Structure your response in with these sections:
-  
-  1. **Metadata**
-    - Title:
-    - Source:
-    - Author:
-    - Published:
-    - URL:
+        return `Please read the article provided and create a concise, proportionate overview. Structure your response with these sections:
 
-  2. **Key Points**
-     - The most important takeaways from the article.
-  
-  3. **Summary** *(proportional to length)*
-     - Overview of main content and arguments.
-  
-  4. **Context & Background**
-     - Relevant historical or thematic information.
-  
-  5. **Analysis**
-     - Main arguments and evidence
-     - Potential biases or limitations
-     - Writing style and tone
-  
-  6. **Implications**
-     - Broader significance or impact
-  
-  **Here is the article:**`;
+1.  **Metadata**
+    *   Title:
+    *   Source:
+    *   Author:
+    *   Published:
+    *   URL:
+
+2.  **Key Points**
+    *   The most important takeaways from the article. *Include relevant quotes if they concisely capture a key point.*
+
+3.  **Background**
+    *   Relevant historical or thematic information providing context for the article.
+
+4.  **Structured Summary**
+    *   A summary of the article that mirrors its original structure. The length of each summarized section should be proportional to the length of the corresponding section in the original article. The overall length of this summary should also reflect the overall length of the original article.  *Include relevant quotes where they effectively illustrate a point or argument.*
+
+5.  **Analysis & Implications**
+    *   Main arguments and supporting evidence presented in the article. *Include relevant quotes to support the analysis.*
+    *   Potential biases or limitations of the article.
+    *   The writing style and tone used by the author.
+    *   The broader significance, impact, or consequences related to the article's content.
+    *   **Novel Insights:** Any original observations, connections to other works, or critical perspectives that go beyond the explicit content of the article.
+
+The template looks like markdown, but don't output markdown directly.
+**Here is the article:**`;
     },
 
     extract() {

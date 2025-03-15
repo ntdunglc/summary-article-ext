@@ -22,6 +22,7 @@ window.hackernewsExtractor = {
   - Industry experience or historical context shared
   - Practical suggestions or solutions proposed
   
+  The template looks like markdown, but don't output markdown directly.
   Here is the discussion:`;
     },
     extract() {

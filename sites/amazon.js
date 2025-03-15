@@ -32,6 +32,7 @@ window.amazonExtractor = {
 - Additional items or accessories to consider
 - Installation or setup tips if relevant
 
+The template looks like markdown, but don't output markdown directly.
 Here is the product information:`;
     },
 

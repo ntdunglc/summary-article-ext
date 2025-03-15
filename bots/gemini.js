@@ -30,6 +30,6 @@ window.geminiBot = {
             if (runButton) {
                 runButton.click();
             }
-        }, 1000);
+        }, 200);
     }
 };

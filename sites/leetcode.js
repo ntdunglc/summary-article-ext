@@ -31,6 +31,7 @@ window.leetcodeExtractor = {
 - Provide the time and space complexity of your solution.
 - A few points of future improvements.
 
+The template looks like markdown, but don't output markdown directly.
 Code skeleton:
 
 `;
