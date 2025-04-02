@@ -26,10 +26,30 @@ window.geminiBot = {
         textarea.dispatchEvent(inputEvent);
 
         setTimeout(() => {
+            // Enable Grounding button (added section)
+            this.enableGrounding();
+
             const runButton = document.querySelector('button[aria-label="Run"]');
             if (runButton) {
                 runButton.click();
             }
+
         }, 200);
+
+
+    },
+    async enableGrounding() {
+        const groundingButton = await this.waitForElement('button[aria-label="Grounding with Google Search"]');
+        if (groundingButton) {
+            const isCurrentlyChecked = groundingButton.getAttribute('aria-checked') === 'true';
+            if (!isCurrentlyChecked) {
+                console.log("Enabling Grounding with Google Search");
+                groundingButton.click();
+            } else {
+                console.log("Grounding is already enabled")
+            }
+        } else {
+            console.error('Could not find the "Grounding with Google Search" button.');
+        }
     }
 };
