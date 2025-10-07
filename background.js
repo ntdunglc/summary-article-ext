@@ -2,7 +2,8 @@ const SERVICE_URLS = {
   claude: 'https://claude.ai/new',
   deepseek: 'https://chat.deepseek.com/',
   chatgpt: 'https://chatgpt.com/',
-  gemini: 'https://aistudio.google.com/prompts/new_chat'
+  aistudio: 'https://aistudio.google.com/prompts/new_chat',
+  gemini: 'https://gemini.google.com/app'
 };
 
 const EXTRACTORS = {
@@ -10,14 +11,16 @@ const EXTRACTORS = {
   article: 'sites/article.js',
   hackernews: 'sites/hackernews.js',
   amazon: 'sites/amazon.js',
-  leetcode: 'sites/leetcode.js'
+  leetcode: 'sites/leetcode.js',
+  zillow: 'sites/zillow.js'
 };
 
 const HANDLERS = {
   claude: 'claudeBot',
   deepseek: 'deepseekBot',
   chatgpt: 'chatgptBot',
-  gemini: 'geminiBot'
+  gemini: 'geminiBot',
+  aistudio: 'aistudioBot'
 };
 
 let extractedText = '';
@@ -33,10 +36,12 @@ chrome.action.onClicked.addListener(async (tab) => {
     siteType = 'amazon';
   } else if (tab.url.includes('leetcode.com')) {
     siteType = 'leetcode';
+  } else if (tab.url.includes('zillow.com')) {
+    siteType = 'zillow';
   } else {
     siteType = 'article';
   }
-  if (siteType == 'article') {
+  if (siteType == 'article' || siteType == 'zillow') {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       files: ['Readability.js']
@@ -65,6 +70,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       chrome.storage.sync.get({ service: 'claude' }, (result) => {
         const service = result.service.toLowerCase();
         const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+        console.log(result.service, service, url)
 
         chrome.tabs.create({
           url: url,
@@ -86,6 +92,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     } else if (tab.url.includes('chatgpt.com')) {
       service = 'chatgpt';
     } else if (tab.url.includes('aistudio.google.com')) {
+      service = 'aistudio';
+    } else if (tab.url.includes('gemini.google.com')) {
       service = 'gemini';
     } else {
       return;

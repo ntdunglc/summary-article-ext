@@ -1,29 +1,42 @@
 window.hackernewsExtractor = {
     getPrompt() {
-        return `Please analyze this Hacker News discussion thread and create a structured summary in the following format:
-  ### Main Topic
-  - Title of the post
-  - URL
-  - Hackernews URL
-  - Author, points, and comment count
-  - Key context and what sparked the discussion
-  
-  ### Key Points
-  - Summary for each key point
-  ### Major Discussion Threads
-  For each significant discussion branch (>10 upvotes or significant discussion depth):
-  - Main argument/point being discussed
-  - Key perspectives (with usernames)
-  > Notable quotes that capture the essence of the discussion
-  - How the discussion evolved/branched
-  
-  ### Notable Insights
-  - Unique perspectives or particularly insightful comments
-  - Industry experience or historical context shared
-  - Practical suggestions or solutions proposed
-  
-  The template looks like markdown, but don't output markdown directly.
-  Here is the discussion:`;
+        return `Please analyze the provided article and its Hacker News discussion thread. Create a structured summary in the following format:
+
+## Main Topic
+- Title of the post
+- URL of the original article
+- Hacker News URL
+- Author, points, and comment count
+- Key context from the article/post that sparked the discussion
+
+## Article Key Points
+- **{Key point 1}**: A concise summary of the first main idea from the article.
+- **{Key point 2}**: A concise summary of the second main idea from the article.
+- **{Key point 3}**: A concise summary of the third main idea from the article.
+(Continue for all major points in the article)
+
+## Major Discussion Threads
+For each significant discussion branch (>10 upvotes or significant discussion depth):
+
+### {Thread headline}
+- Main argument/point being discussed
+- Key perspectives (with usernames)
+> Notable quotes that capture the essence of the discussion
+- How the discussion evolved/branched
+
+## Notable Insights
+- Unique perspectives or particularly insightful comments
+- Industry experience or historical context shared
+- Practical suggestions or solutions proposed
+
+The template looks like markdown, but don't output markdown directly.
+Username should be in bold.
+
+--- ARTICLE CONTENT ---
+[PASTE ARTICLE CONTENT HERE]
+
+--- HACKER NEWS DISCUSSION ---
+Here is the discussion:`;
     },
     extract() {
         // Extract main post details

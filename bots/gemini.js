@@ -7,122 +7,78 @@ window.geminiBot = {
      * @returns {Promise<Element|null>} The found element or null if timeout.
      */
     async waitForElement(selector, maxAttempts = 20, delay = 500) {
-        // console.log(`Waiting for element: "${selector}"`); // Optional: Less verbose logging
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             const element = document.querySelector(selector);
             if (element) {
-                // console.log(`Element found: "${selector}"`); // Optional: Less verbose logging
                 return element;
             }
             if (attempt === maxAttempts) {
                 console.error(`Element not found after ${maxAttempts} attempts: "${selector}"`);
                 break;
             }
-            // console.log(`Attempt ${attempt} failed for "${selector}", retrying in ${delay}ms...`); // Optional: Less verbose logging
             await new Promise(resolve => setTimeout(resolve, delay));
         }
         return null;
     },
 
     /**
-     * Inputs text into the prompt textarea, enables grounding, closes sidebar, and clicks Run.
-     * @param {string} text - The text to input into the prompt textarea.
+     * Inputs text into the Gemini prompt box and clicks the Send button.
+     * @param {string} text - The text to input into the prompt box.
      */
     async input(text) {
-        const textareaSelector = 'textarea[aria-label*="Type something"]';
-        const textarea = await this.waitForElement(textareaSelector);
+        // Selector for the content-editable div that serves as the input area in Gemini.
+        const promptBoxSelector = 'div.ql-editor[data-placeholder="Ask Gemini"]';
+        const promptBox = await this.waitForElement(promptBoxSelector);
 
-        if (!textarea) {
-            console.error('Textarea not found after retries. Selector used:', textareaSelector);
+        if (!promptBox) {
+            console.error('Prompt box not found. Selector used:', promptBoxSelector);
             return;
         }
 
-        console.log('Found textarea, inputting text:', text);
-        textarea.value = text;
+        console.log('Found prompt box, inputting text:', text);
+
+        // For a content-editable div, we set its text content.
+        // The <p> tag inside is where the text actually lives.
+        const p_element = promptBox.querySelector('p');
+        if (p_element) {
+            p_element.textContent = text;
+        } else {
+            // Fallback if the p tag isn't there
+            promptBox.textContent = text;
+        }
+
+
+        // Dispatch an 'input' event to let the web app know the content has changed.
+        // This is crucial for enabling the send button.
         const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-        textarea.dispatchEvent(inputEvent);
-        await new Promise(resolve => setTimeout(resolve, 100));
+        promptBox.dispatchEvent(inputEvent);
 
-        // Enable Grounding AND Close Sidebar (if open)
-        await this.enableGroundingAndCloseSidebar(); // Call the combined function
+        // A short delay to allow the UI to update and enable the send button.
+        await new Promise(resolve => setTimeout(resolve, 200));
 
-        const runButtonSelector = 'button[aria-label="Run"]:not([disabled])';
-        // Increase wait time slightly for run button, as grounding/sidebar actions might delay its enabling
-        const runButton = await this.waitForElement(runButtonSelector, 25, 300);
+        // Selector for the send button, specifically when it's not disabled.
+        const sendButtonSelector = 'button[aria-label="Send message"]:not([aria-disabled="true"])';
+        const sendButton = await this.waitForElement(sendButtonSelector, 25, 300);
 
-        if (runButton) {
-            console.log('Clicking enabled Run button.');
-            runButton.click();
+        if (sendButton) {
+            console.log('Clicking enabled Send button.');
+            sendButton.click();
         } else {
-            console.error('Run button not found or not enabled after input and grounding/sidebar check. Selector used:', runButtonSelector);
-            const runButtonMaybeDisabled = await this.waitForElement('button[aria-label="Run"]', 1, 10);
-            if (runButtonMaybeDisabled) {
-                console.warn('Run button was found, but it remained disabled.');
+            console.error('Send button not found or not enabled. Selector used:', sendButtonSelector);
+            const sendButtonMaybeDisabled = await this.waitForElement('button[aria-label="Send message"]', 1, 10);
+            if (sendButtonMaybeDisabled) {
+                console.warn('Send button was found, but it remained disabled.');
             }
-        }
-    },
-
-    /**
-     * Ensures the "Grounding with Google Search" slide toggle is enabled.
-     * Then checks if the "Run settings" panel is expanded and closes it if needed.
-     */
-    async enableGroundingAndCloseSidebar() {
-        console.log('Checking Grounding setting...');
-        // --- Selectors ---
-        const groundingButtonSelector = 'button[role="switch"][aria-label="Grounding with Google Search"]';
-        const panelSelector = 'ms-run-settings.expanded'; // Selector for the expanded panel
-        const closeButtonSelectorInside = 'button[aria-label="Close run settings panel"]'; // Selector for the close button *within* the panel
-
-        // --- Step 1: Handle Grounding Toggle ---
-        const groundingButton = await this.waitForElement(groundingButtonSelector, 10, 200); // Shorter wait is ok here
-
-        if (groundingButton) {
-            const isCurrentlyChecked = groundingButton.getAttribute('aria-checked') === 'true';
-            if (!isCurrentlyChecked) {
-                console.log("Grounding is disabled, enabling...");
-                groundingButton.click();
-                await new Promise(resolve => setTimeout(resolve, 150)); // Slightly longer delay after clicking toggle
-                console.log("Grounding toggle clicked.");
-            } else {
-                console.log("Grounding is already enabled.");
-            }
-        } else {
-            console.warn('Could not find the "Grounding with Google Search" toggle button. It might be hidden or UI changed. Selector used:', groundingButtonSelector);
-            // Proceed to check sidebar anyway, it might still be open
-        }
-
-        // Give UI a moment to potentially update after grounding check/click
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // --- Step 2: Check and Close Sidebar ---
-        console.log('Checking if Run Settings panel is expanded...');
-        // Use querySelector directly. We don't need to wait for it to *appear*, just check if it *is* expanded now.
-        const expandedPanel = document.querySelector(panelSelector);
-
-        if (expandedPanel) {
-            console.log('Run Settings panel is expanded. Attempting to close...');
-            // Find the close button *inside* the specific expanded panel element
-            const closeButton = expandedPanel.querySelector(closeButtonSelectorInside);
-            if (closeButton) {
-                closeButton.click();
-                console.log('Clicked the close button for the Run Settings panel.');
-                await new Promise(resolve => setTimeout(resolve, 150)); // Delay after clicking close
-            } else {
-                // Log a warning if the panel is expanded but the close button isn't found within it
-                console.warn(`Found expanded panel ("${panelSelector}"), but couldn't find the close button ("${closeButtonSelectorInside}") inside it. Panel may remain open.`);
-            }
-        } else {
-            console.log('Run Settings panel is not expanded or not found.');
         }
     }
-    // Note: Renamed the function to reflect its dual purpose.
-    // If you prefer to keep the old name `enableGrounding`, just rename
-    // `enableGroundingAndCloseSidebar` back to `enableGrounding` above and in the `input` function call.
 };
 
-// Example Usage (no change needed here):
+// --- Example Usage ---
+// To use this, open the developer console on gemini.google.com/app,
+// paste the entire script above, and then run the example below.
+
 /*
 setTimeout(() => {
-   window.geminiBot.input("Write a short poem about a cat watching the rain.");
-}, 3000);
+    window.geminiBot.input("Write a short poem about a robot discovering music.");
+}, 3000); // 3-second delay to give you time to see it work.
 */
