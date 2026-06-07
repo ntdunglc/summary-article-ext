@@ -25,11 +25,39 @@ window.aistudioBot = {
     },
 
     /**
+     * Waits for the Run button to become enabled.
+     */
+    async waitForRunButton(maxAttempts = 20, delay = 300) {
+        const getButton = () => {
+            const btn = document.querySelector('ms-run-button button') || 
+                        document.querySelector('button[aria-label="Run"]');
+            if (btn) return btn;
+            
+            return Array.from(document.querySelectorAll('button')).find(el => 
+                el.textContent && el.textContent.trim() === 'Run'
+            );
+        };
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const btn = getButton();
+            if (btn) {
+                const isDisabled = btn.disabled || btn.getAttribute('aria-disabled') === 'true' || btn.classList.contains('disabled');
+                if (!isDisabled) {
+                    return btn;
+                }
+            }
+            await new Promise(resolve => setTimeout(resolve, delay));
+        }
+        return getButton();
+    },
+
+    /**
      * Inputs text into the prompt textarea, enables grounding, closes sidebar, and clicks Run.
      * @param {string} text - The text to input into the prompt textarea.
      */
     async input(text) {
-        const textareaSelector = 'textarea[aria-label*="Type something"]';
+        console.log('aistudioBot: input started');
+        const textareaSelector = 'textarea[placeholder*="Start typing"], textarea[aria-label*="Enter a prompt"], textarea[aria-label*="Type something"]';
         const textarea = await this.waitForElement(textareaSelector);
 
         if (!textarea) {
@@ -44,21 +72,22 @@ window.aistudioBot = {
         await new Promise(resolve => setTimeout(resolve, 100));
 
         // Enable Grounding AND Close Sidebar (if open)
-        await this.enableGroundingAndCloseSidebar(); // Call the combined function
+        await this.enableGroundingAndCloseSidebar();
 
-        const runButtonSelector = 'button[aria-label="Run"]:not([disabled])';
-        // Increase wait time slightly for run button, as grounding/sidebar actions might delay its enabling
-        const runButton = await this.waitForElement(runButtonSelector, 25, 300);
+        // Find and wait for enabled Run button
+        console.log('Waiting for Run button to become enabled...');
+        const runButton = await this.waitForRunButton(25, 300);
 
         if (runButton) {
-            console.log('Clicking enabled Run button.');
-            runButton.click();
-        } else {
-            console.error('Run button not found or not enabled after input and grounding/sidebar check. Selector used:', runButtonSelector);
-            const runButtonMaybeDisabled = await this.waitForElement('button[aria-label="Run"]', 1, 10);
-            if (runButtonMaybeDisabled) {
-                console.warn('Run button was found, but it remained disabled.');
+            const isDisabled = runButton.disabled || runButton.getAttribute('aria-disabled') === 'true' || runButton.classList.contains('disabled');
+            if (!isDisabled) {
+                console.log('Clicking enabled Run button:', runButton);
+                runButton.click();
+            } else {
+                console.warn('Run button found but it remained disabled.');
             }
+        } else {
+            console.error('Run button not found after input and grounding check.');
         }
     },
 
@@ -67,52 +96,103 @@ window.aistudioBot = {
      * Then checks if the "Run settings" panel is expanded and closes it if needed.
      */
     async enableGroundingAndCloseSidebar() {
-        console.log('Checking Grounding setting...');
-        // --- Selectors ---
-        const groundingButtonSelector = 'button[role="switch"][aria-label="Grounding with Google Search"]';
-        const panelSelector = 'ms-run-settings.expanded'; // Selector for the expanded panel
-        const closeButtonSelectorInside = 'button[aria-label="Close run settings panel"]'; // Selector for the close button *within* the panel
-
-        // --- Step 1: Handle Grounding Toggle ---
-        const groundingButton = await this.waitForElement(groundingButtonSelector, 10, 200); // Shorter wait is ok here
-
-        if (groundingButton) {
-            const isCurrentlyChecked = groundingButton.getAttribute('aria-checked') === 'true';
+        console.log('enableGroundingAndCloseSidebar: Checking Grounding...');
+        
+        // 1. Try to find the toggle switch directly on the page (Old layout)
+        const directSwitch = document.querySelector('button[role="switch"][aria-label*="Grounding with Google Search" i]');
+        if (directSwitch) {
+            console.log('enableGroundingAndCloseSidebar: Found direct switch on the page:', directSwitch);
+            const isCurrentlyChecked = directSwitch.getAttribute('aria-checked') === 'true';
             if (!isCurrentlyChecked) {
-                console.log("Grounding is disabled, enabling...");
-                groundingButton.click();
-                await new Promise(resolve => setTimeout(resolve, 150)); // Slightly longer delay after clicking toggle
-                console.log("Grounding toggle clicked.");
+                console.log("enableGroundingAndCloseSidebar: Enabling direct grounding switch...");
+                directSwitch.click();
+                await new Promise(resolve => setTimeout(resolve, 300));
             } else {
-                console.log("Grounding is already enabled.");
+                console.log("enableGroundingAndCloseSidebar: Direct grounding switch is already enabled.");
             }
         } else {
-            console.warn('Could not find the "Grounding with Google Search" toggle button. It might be hidden or UI changed. Selector used:', groundingButtonSelector);
-            // Proceed to check sidebar anyway, it might still be open
+            // 2. Check if grounding chip is visible (New layout)
+            const isGroundingChipVisible = () => {
+                const chips = Array.from(document.querySelectorAll('.tool-name, .enabled-tool, button'));
+                return chips.some(el => el.textContent && el.textContent.includes('Grounding with Google Search'));
+            };
+
+            if (isGroundingChipVisible()) {
+                console.log('enableGroundingAndCloseSidebar: Grounding chip is already visible.');
+            } else {
+                console.log('enableGroundingAndCloseSidebar: Grounding chip not found. Opening Tools menu...');
+                const toolsButton = document.querySelector('button[aria-label*="tools" i]') || 
+                                    document.querySelector('button[dialoglabel*="Tools" i]') ||
+                                    Array.from(document.querySelectorAll('button')).find(el => el.textContent && el.textContent.includes('Tools'));
+                
+                if (toolsButton) {
+                    console.log('enableGroundingAndCloseSidebar: Clicking Tools button:', toolsButton);
+                    toolsButton.click();
+                    await new Promise(resolve => setTimeout(resolve, 600)); // wait for tools menu to open
+                    
+                    const overlay = document.querySelector('.cdk-overlay-container') || document;
+                    const elements = Array.from(overlay.querySelectorAll('*')).reverse();
+                    
+                    let groundingItem = null;
+                    for (const el of elements) {
+                        if (el.textContent && el.textContent.includes('Grounding with Google Search')) {
+                            groundingItem = el;
+                            break;
+                        }
+                    }
+                    
+                    if (groundingItem) {
+                        console.log('enableGroundingAndCloseSidebar: Found grounding item in menu:', groundingItem);
+                        const clickable = groundingItem.closest('button, [role="switch"], [role="checkbox"], mat-slide-toggle') || groundingItem;
+                        
+                        const isChecked = clickable.getAttribute('aria-checked') === 'true' || 
+                                          clickable.checked === true || 
+                                          Array.from(clickable.classList).some(cls => cls.toLowerCase().includes('checked'));
+                        
+                        if (!isChecked) {
+                            console.log('enableGroundingAndCloseSidebar: Clicking grounding item to enable:', clickable);
+                            clickable.click();
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        } else {
+                            console.log('enableGroundingAndCloseSidebar: Grounding is already enabled in the menu.');
+                        }
+                    } else {
+                        console.warn('enableGroundingAndCloseSidebar: Could not find Grounding option in the Tools menu.');
+                    }
+                    
+                    // Close the tools menu
+                    const backdrop = document.querySelector('.cdk-overlay-backdrop');
+                    if (backdrop) {
+                        backdrop.click();
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    } else {
+                        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    }
+                } else {
+                    console.warn('enableGroundingAndCloseSidebar: Tools button not found.');
+                }
+            }
         }
 
-        // Give UI a moment to potentially update after grounding check/click
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        // --- Step 2: Check and Close Sidebar ---
-        console.log('Checking if Run Settings panel is expanded...');
-        // Use querySelector directly. We don't need to wait for it to *appear*, just check if it *is* expanded now.
+        // 3. Check and Close Sidebar
+        console.log('enableGroundingAndCloseSidebar: Checking if Run Settings panel is expanded...');
+        const panelSelector = 'ms-run-settings.expanded';
+        const closeButtonSelectorInside = 'button[aria-label="Close run settings panel"]';
         const expandedPanel = document.querySelector(panelSelector);
 
         if (expandedPanel) {
-            console.log('Run Settings panel is expanded. Attempting to close...');
-            // Find the close button *inside* the specific expanded panel element
-            const closeButton = expandedPanel.querySelector(closeButtonSelectorInside);
+            console.log('enableGroundingAndCloseSidebar: Run Settings panel is expanded. Attempting to close...');
+            const closeButton = expandedPanel.querySelector(closeButtonSelectorInside) || document.querySelector(closeButtonSelectorInside);
             if (closeButton) {
                 closeButton.click();
-                console.log('Clicked the close button for the Run Settings panel.');
-                await new Promise(resolve => setTimeout(resolve, 150)); // Delay after clicking close
+                console.log('enableGroundingAndCloseSidebar: Clicked the close button for the Run Settings panel.');
+                await new Promise(resolve => setTimeout(resolve, 300));
             } else {
-                // Log a warning if the panel is expanded but the close button isn't found within it
-                console.warn(`Found expanded panel ("${panelSelector}"), but couldn't find the close button ("${closeButtonSelectorInside}") inside it. Panel may remain open.`);
+                console.warn('enableGroundingAndCloseSidebar: Close button not found inside expanded panel.');
             }
         } else {
-            console.log('Run Settings panel is not expanded or not found.');
+            console.log('enableGroundingAndCloseSidebar: Run Settings panel is not expanded.');
         }
     }
     // Note: Renamed the function to reflect its dual purpose.
