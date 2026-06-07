@@ -2,7 +2,7 @@ window.youtubeExtractor = {
     getPrompt() {
         return `You are an expert AI video analyst. Your goal is to create a comprehensive, insightful, and well-structured summary of a YouTube video using the provided metadata, description, and transcript.
 
-Your output must strictly follow the markdown template below. Do not add any introductory or concluding remarks outside of this template.
+Your output must strictly follow the markdown template below. Do not add any introductory or concluding remarks outside of this template. Make sure your output has all the sections and no duplicate sections.
 
 <template>
 ### Video Metadata
@@ -11,6 +11,7 @@ Your output must strictly follow the markdown template below. Do not add any int
 **URL:** [YouTube Video URL]
 **Duration:** [Duration] | **Publication Date:** [Publication Date] | **Views:** [Views]
 **Extraction Date:** [Date and Time of Extraction]
+**Is AI-GENERATED**: Yes/No
 
 ---
 
@@ -34,12 +35,27 @@ Your output must strictly follow the markdown template below. Do not add any int
 ---
 
 ### Timestamped Walkthrough
-Create a detailed walkthrough that follows the video's structure. For each major section:
-- Use a timestamp range (e.g., [00:45 - 05:10]).
-- Write a concise summary of that section's content, proportional to its length in the video.
-- Use verbatim quotes for particularly insightful or important statements.
-- Explain complex ideas as they are introduced.
-- **IMPORTANT**: Skip all sponsor messages, ad reads, and self-promotional segments.
+Create an **in-depth, highly granular walkthrough** that follows the video's structure. The depth and detail of this walkthrough MUST scale proportionally with the video's total duration. A long podcast or lecture should result in a highly detailed walkthrough with many sections.
+
+**Sectioning Rules:**
+- **Topic-Based, Not Time-Based:** NEVER split a section just because a certain amount of time has passed. A section should be exactly as long or as short as the specific topic requires.
+- **Sub-Arguments for Long Themes:** If a single overarching topic lasts a very long time, do not keep it as one massive block. Break it down logically by the speaker's sub-arguments, new examples, or narrative shifts.
+- **Continuous Coverage:** Ensure chronological continuity. Do not leave unexplained gaps in time between sections (the end timestamp of one section should generally be the start timestamp of the next, unless explicitly skipping an ad read).
+- **Strict Heading Format:** You MUST format every single section and subsection exactly as shown below, using a Level 4 Markdown heading (####).
+
+**FORMAT EXACTLY LIKE THIS FOR EVERY SECTION:**
+
+#### [Start Time - End Time] Specific Topic/Subsection Title
+- Write a summary of that segment's content, capturing all main ideas, supporting arguments, and specific examples.
+- **Integrate multiple key verbatim quotes** to capture the speaker's exact phrasing and tone.
+- **Clearly explain** any complex concepts, jargon, or acronyms as they are introduced.
+- Ensure the summary flows logically and connects the ideas presented within that segment.
+- Highlight key ideas and phrases.
+
+#### [Next Start Time - Next End Time] Next Topic/Subsection Title
+- [Summary details for the next segment...]
+
+*(Continue this strict pattern for the entire video)*
 
 ---
 
@@ -62,6 +78,7 @@ Critically analyze the content to identify the following:
 - **Perform a web search** to verify each claim against reliable, up-to-date sources (e.g., academic journals, reputable news organizations, official reports).
 - For each claim, state the verdict: **Confirmed**, **Refuted**, or **Lacks Consensus**.
 - Briefly summarize the findings from your search and **provide clickable links** to the primary sources used for verification. The sources should be direct links to sources, not search query.
+- If you can't find valid source URLs, never put google search URL as source, they are not valid.
 
 ---
 
@@ -129,7 +146,7 @@ Based on the information that follows, generate the summary.
 
         const getVideoInfo = () => {
             const infoText = document.querySelector('ytd-watch-info-text #info');
-            return infoText.textContent;
+            return infoText ? infoText.textContent : 'N/A';
         };
 
         const expandDescription = async () => {
@@ -173,54 +190,82 @@ Based on the information that follows, generate the summary.
         };
 
         (async () => {
+            let videoTitle = 'N/A';
+            let channelName = 'N/A';
+            let videoUrl = window.location.href;
+            let videoDuration = 'N/A';
+            let info = 'N/A';
+            let descriptionText = 'N/A';
+            let descriptionLinks = [];
+            let transcriptText = '';
+
             try {
                 const titleElement = document.querySelector('#title');
-                const videoTitle = titleElement ? titleElement.textContent.trim() : 'N/A';
+                videoTitle = titleElement ? titleElement.textContent.trim() : 'N/A';
+
                 const channelElement = document.querySelector('#channel-name #text');
-                const channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
-                const videoUrl = window.location.href;
-                const videoDuration = getVideoDuration();
-                const info = getVideoInfo();
-                const { text: descriptionText, links: descriptionLinks } = await getDescription();
-                const menuButton = await waitForElement('button[aria-label="More actions"]');
-                if (!menuButton) throw new Error('Menu button not found');
-                menuButton.click();
-                await sleep(500);
-                if (!await clickButtonWithText('Show transcript')) {
-                    if (!await clickButtonWithText('Open transcript')) {
-                        throw new Error('Transcript button not found');
-                    }
-                }
-                const transcriptPanel = await waitForElement('ytd-transcript-segment-list-renderer');
-                if (!transcriptPanel) throw new Error('Transcript panel not found');
-                await sleep(1000);
-                const segments = transcriptPanel.querySelectorAll('ytd-transcript-segment-renderer');
-                let transcriptText = '';
-                let currentParagraph = '';
-                let currentTimestamp = '';
-                segments.forEach((segment) => {
-                    const timestampElement = segment.querySelector('.segment-timestamp, .timestamp, #timestamp');
-                    const textElement = segment.querySelector('.segment-text, .segment-content, div[class*="segment-text"]');
-                    if (timestampElement && textElement) {
-                        const timestamp = timestampElement.textContent.trim();
-                        const text = textElement.textContent.trim().replace(/\s+/g, ' ');
-                        if (currentParagraph === '') {
-                            currentTimestamp = timestamp;
+                channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
+
+                videoDuration = getVideoDuration();
+                info = getVideoInfo();
+
+                const descResult = await getDescription();
+                descriptionText = descResult.text;
+                descriptionLinks = descResult.links;
+
+                try {
+                    const menuButton = await waitForElement('button[aria-label="More actions"]', 2000);
+                    if (!menuButton) throw new Error('Menu button not found');
+
+                    menuButton.click();
+                    await sleep(500);
+
+                    if (!await clickButtonWithText('Show transcript')) {
+                        if (!await clickButtonWithText('Open transcript')) {
+                            throw new Error('Transcript button not found');
                         }
-                        currentParagraph += text + ' ';
-                        if (currentParagraph.length > 250) { // Combine into reasonable paragraphs
-                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                            currentParagraph = '';
-                        }
-                    } else {
-                        transcriptText += segment.textContent;
                     }
-                });
-                if (currentParagraph) {
-                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+
+                    const segmentSelector = 'ytd-transcript-segment-renderer, transcript-segment-view-model';
+                    const hasSegments = await waitForElement(segmentSelector);
+                    if (!hasSegments) throw new Error('Transcript panel/segments not found');
+
+                    await sleep(1000);
+                    const segments = document.querySelectorAll(segmentSelector);
+
+                    let currentParagraph = '';
+                    let currentTimestamp = '';
+
+                    segments.forEach((segment) => {
+                        const timestampElement = segment.querySelector('.segment-timestamp, .timestamp, #timestamp, .ytwTranscriptSegmentViewModelTimestamp');
+                        const textElement = segment.querySelector('.segment-text, .segment-content, div[class*="segment-text"], .yt-core-attributed-string');
+
+                        if (timestampElement && textElement) {
+                            const timestamp = timestampElement.textContent.trim();
+                            const text = textElement.textContent.trim().replace(/\s+/g, ' ');
+                            if (currentParagraph === '') {
+                                currentTimestamp = timestamp;
+                            }
+                            currentParagraph += text + ' ';
+                            if (currentParagraph.length > 250) {
+                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                                currentParagraph = '';
+                            }
+                        } else {
+                            transcriptText += segment.textContent;
+                        }
+                    });
+                    if (currentParagraph) {
+                        transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                    }
+
+                    if (!transcriptText) throw new Error('Transcript text empty');
+
+                } catch (transcriptError) {
+                    console.warn('Transcript extraction failed, falling back to URL:', transcriptError);
+                    transcriptText = `Transcript could not be extracted directly. Please use the video URL to analyze the content: ${videoUrl}`;
                 }
 
-                // Added current date and time
                 const extractionDate = new Date().toLocaleString();
 
                 let metadataText = `### Video Metadata
@@ -232,11 +277,11 @@ Based on the information that follows, generate the summary.
 
                 let footnotesText = '';
                 if (descriptionLinks.length > 0) {
-                    footnotesText = '\nHere are the external URLs from the description to use as footnotes:\n<footnotes>\n';
+                    footnotesText = '\nHere are the external URLs from the description:\n<description_links>\n';
                     descriptionLinks.forEach((link, index) => {
                         footnotesText += `[${index + 1}] ${link.href}\n`;
                     });
-                    footnotesText += '</footnotes>';
+                    footnotesText += '</description_links>';
                 }
 
                 const prompt = this.getPrompt();
@@ -266,11 +311,12 @@ ${transcriptText}
                     videoDescription: descriptionText,
                     videoDescriptionLinks: descriptionLinks
                 });
+
             } catch (error) {
-                console.error('Failed to extract transcript, description, and video info:', error);
+                console.error('Critical failure in extraction:', error);
                 chrome.runtime.sendMessage({
                     type: 'extractionError',
-                    error: 'Failed to extract transcript, description, and video info',
+                    error: 'Failed to extract video data',
                     details: error.message
                 });
             }

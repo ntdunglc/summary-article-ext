@@ -3,12 +3,7 @@
   "name": "AI Summarizer",
   "version": "1.1.0",
   "description": "Summarizes articles and YouTube videos using selected AI providers",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "tabs",
-    "storage"
-  ],
+  "permissions": ["activeTab", "scripting", "tabs", "storage"],
   "action": {
     "default_icon": {
       "16": "icons/icon16.png",
@@ -44,6 +39,8 @@
     "https://*.amazon.com/*",
     "https://leetcode.com/*",
     "https://*.leetcode.com/*",
-    "https://*.zillow.com/*"
+    "https://*.zillow.com/*",
+    "https://*.chess.com/*",
+    "<all_urls>"
   ]
 }

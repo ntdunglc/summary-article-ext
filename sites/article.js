@@ -62,6 +62,7 @@ Critically analyze the content to identify the following:
 - **Perform a web search** to verify each claim against reliable, up-to-date sources (e.g., academic journals, reputable news organizations, official reports).
 - For each claim, state the verdict: **Confirmed**, **Refuted**, or **Lacks Consensus**.
 - Briefly summarize the findings from your search and **provide clickable links** to the primary sources used for verification. The sources should be direct links, not search queries.
+- If you can't find valid source URLs, never put google search URL as source, they are not valid.
 
 ---
 
@@ -88,13 +89,12 @@ Based on the information that follows, generate the summary.
 
     extract() {
         try {
-            const documentClone = document.cloneNode(true);
-            // We are passing the body element instead of the whole document
-            // because Readability works better with a body element.
+          const documentClone = document.cloneNode(true);
             const reader = new Readability(documentClone);
             const article = reader.parse();
 
-            if (article && article.textContent) {
+          // The length check prevents thin/useless iframes from triggering an AI tab
+          if (article && article.textContent && article.textContent.trim().length > 250) {
                 const extractionDate = new Date().toLocaleString();
 
                 const metadataText = `### Article Metadata
@@ -125,15 +125,12 @@ ${article.textContent}
                     articleUrl: window.location.href,
                 });
             } else {
-                throw new Error('Readability could not parse the article.');
+              console.log('Readability parsed this frame, but found no substantial article content. Ignored.');
             }
         } catch (error) {
             console.error('Error parsing article:', error);
-            chrome.runtime.sendMessage({
-                type: 'extractionError',
-                error: 'Failed to parse the article using Readability.',
-                details: error.message
-            });
+          // We omit the extractionError message here so that bad frames failing quietly 
+          // don't interrupt a good extraction happening in a different iframe.
         }
     }
 };
