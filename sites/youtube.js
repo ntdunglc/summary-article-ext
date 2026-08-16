@@ -328,47 +328,12 @@ ${transcriptText}
     }
 };
 
-// Self-contained YouTube auto-run listener (no global variables, no storage)
-(function () {
-    if (window.top !== window.self) return;
-
-    let activeVideoId = null;
-
-    function handleNavigation() {
-        const url = new URL(window.location.href);
-        if (url.pathname !== '/watch') {
-            activeVideoId = null;
-            return;
-        }
-
-        const videoId = url.searchParams.get('v');
-        if (!videoId || videoId === activeVideoId) {
-            return;
-        }
-        activeVideoId = videoId;
-
-        // Give the player 1.5 seconds to load duration data
-        setTimeout(() => {
-            if (new URL(window.location.href).searchParams.get('v') !== videoId) return;
-
-            const duration = window.youtubeExtractor?.getDurationInSeconds?.() || 0;
-            // Auto-run if duration is greater than 10 minutes (600 seconds)
-            if (duration >= 600) {
-                window.youtubeExtractor.extract();
-            }
-        }, 1500);
-    }
-
-    window.addEventListener('yt-navigate-finish', handleNavigation);
-
-    if (window.location.pathname === '/watch') {
-        handleNavigation();
-    }
-})();
-
 // Self-contained button injector for video cards across YouTube (Home, Feeds, Search)
 (function () {
     if (window.top !== window.self) return;
+
+    const SPARKLE_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4M3 5h4M19 17v4M17 19h4"/></svg>`;
+    const SPINNER_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>`;
 
     function ensureStyles() {
         if (document.getElementById('__yt_ai_summarize_styles__')) return;
@@ -382,41 +347,74 @@ ${transcriptText}
                 z-index: 50 !important;
                 display: inline-flex !important;
                 align-items: center !important;
-                gap: 5px !important;
-                padding: 5px 9px !important;
-                background: rgba(15, 23, 42, 0.9) !important;
-                color: #ffffff !important;
-                border: 1px solid rgba(56, 189, 248, 0.4) !important;
-                border-radius: 6px !important;
-                font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
-                font-size: 11px !important;
-                font-weight: 600 !important;
-                line-height: 1 !important;
+                justify-content: center !important;
+                width: 32px !important;
+                height: 32px !important;
+                padding: 0 !important;
+                background: rgba(15, 23, 42, 0.88) !important;
+                color: #38bdf8 !important;
+                border: 1px solid rgba(56, 189, 248, 0.45) !important;
+                border-radius: 50% !important;
                 cursor: pointer !important;
                 backdrop-filter: blur(8px) !important;
                 -webkit-backdrop-filter: blur(8px) !important;
-                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
-                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4) !important;
-                pointer-events: auto !important;
-                opacity: 0.95 !important;
+                transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s ease !important;
+                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45) !important;
+                opacity: 0 !important;
+                visibility: hidden !important;
+                pointer-events: none !important;
+                transform: scale(0.9) !important;
             }
+
+            /* Only show button on hover of the video card or thumbnail */
+            yt-lockup-view-model:hover .yt-ai-summarize-badge,
+            ytd-rich-item-renderer:hover .yt-ai-summarize-badge,
+            ytd-video-renderer:hover .yt-ai-summarize-badge,
+            ytd-grid-video-renderer:hover .yt-ai-summarize-badge,
+            ytd-compact-video-renderer:hover .yt-ai-summarize-badge,
+            .yt-lockup-view-model-wiz__content-image:hover .yt-ai-summarize-badge,
+            ytd-thumbnail:hover .yt-ai-summarize-badge,
+            #thumbnail:hover .yt-ai-summarize-badge {
+                opacity: 0.95 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
+                transform: scale(1) !important;
+            }
+
             .yt-ai-summarize-badge:hover {
                 opacity: 1 !important;
                 background: rgba(15, 23, 42, 1) !important;
                 border-color: #38bdf8 !important;
-                box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35) !important;
-                transform: scale(1.05) !important;
-                color: #38bdf8 !important;
+                box-shadow: 0 4px 14px rgba(56, 189, 248, 0.5) !important;
+                transform: scale(1.12) !important;
+                color: #ffffff !important;
             }
+
             .yt-ai-summarize-badge svg {
-                stroke: #38bdf8 !important;
-                flex-shrink: 0;
+                width: 17px !important;
+                height: 17px !important;
+                stroke: currentColor !important;
+                flex-shrink: 0 !important;
             }
+
             .yt-ai-summarize-badge.is-loading {
+                opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
                 background: rgba(2, 132, 199, 0.95) !important;
                 border-color: #38bdf8 !important;
                 cursor: wait !important;
                 color: #ffffff !important;
+                transform: scale(1) !important;
+            }
+
+            .yt-ai-summarize-badge.is-loading svg {
+                animation: yt-ai-spin 1s linear infinite !important;
+            }
+
+            @keyframes yt-ai-spin {
+                from { transform: rotate(0deg); }
+                to { transform: rotate(360deg); }
             }
         `;
         (document.head || document.documentElement).appendChild(style);
@@ -468,7 +466,7 @@ ${transcriptText}
 
             const btn = document.createElement('button');
             btn.className = 'yt-ai-summarize-badge';
-            btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+            btn.innerHTML = SPARKLE_ICON_SVG;
             btn.title = 'Summarize with AI';
 
             btn.addEventListener('click', (e) => {
@@ -476,7 +474,7 @@ ${transcriptText}
                 e.stopPropagation();
 
                 btn.classList.add('is-loading');
-                btn.innerHTML = `<span>⏳ Summarizing...</span>`;
+                btn.innerHTML = SPINNER_ICON_SVG;
 
                 const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
                 const payload = {
@@ -493,7 +491,7 @@ ${transcriptText}
 
                 setTimeout(() => {
                     btn.classList.remove('is-loading');
-                    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+                    btn.innerHTML = SPARKLE_ICON_SVG;
                 }, 4000);
             });
 
