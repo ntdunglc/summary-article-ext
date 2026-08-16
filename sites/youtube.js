@@ -656,6 +656,12 @@ ${transcriptText}
                 'a#thumbnail'
             ) || card;
 
+            // Prevent injecting multiple buttons if child/parent already processed
+            if (thumb.querySelector('.yt-ai-summarize-badge') || card.querySelector('.yt-ai-summarize-badge')) {
+                card.dataset.aiBtn = 'true';
+                return;
+            }
+
             // Only mark card as processed once we actually inject the button
             card.dataset.aiBtn = 'true';
 
@@ -671,6 +677,7 @@ ${transcriptText}
                 e.preventDefault();
                 e.stopPropagation();
 
+                if (btn.classList.contains('is-loading')) return;
                 btn.classList.add('is-loading');
 
                 const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;

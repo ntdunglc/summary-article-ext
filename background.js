@@ -277,7 +277,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       return;
     }
 
-    if (mode === 'summarize_and_close') {
+    if (mode === 'summarize_and_close' || mode === 'summarize_and_close_running') {
       if (senderTabId) {
         // Auto-close the temporary background watch tab
         chrome.tabs.remove(senderTabId).catch(() => {});
@@ -298,7 +298,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       return;
     }
 
-    if (mode === 'summarize_and_replace') {
+    if (mode === 'summarize_and_replace' || mode === 'summarize_and_replace_running') {
       if (senderTabId) {
         chrome.storage.sync.get({ service: 'claude' }, (result) => {
           const service = (result.service || 'claude').toLowerCase();
@@ -333,7 +333,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     if (senderTabId) {
       const storageKey = `pendingAction_${senderTabId}`;
       const stored = await chrome.storage.session.get(storageKey);
-      if (stored && stored[storageKey] === 'summarize_and_close') {
+      if (stored && (stored[storageKey] === 'summarize_and_close' || stored[storageKey] === 'summarize_and_close_running')) {
         chrome.tabs.remove(senderTabId).catch(() => {});
       }
       await chrome.storage.session.remove(storageKey);
@@ -353,6 +353,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const actionResult = await chrome.storage.session.get(actionKey);
     const action = actionResult ? actionResult[actionKey] : null;
     if ((action === 'summarize_and_close' || action === 'summarize_and_replace') && tab.url && tab.url.includes('youtube.com/watch')) {
+      // Consume the action immediately so subsequent onUpdated complete events cannot trigger extraction twice
+      await chrome.storage.session.set({ [actionKey]: action + '_running' });
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tabId },
