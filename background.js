@@ -216,15 +216,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.type === 'summarizeYouTubeFromHome') {
     chrome.tabs.create({
       url: message.videoUrl,
-      active: true
+      active: false
     }, (newTab) => {
       const storageKey = `pendingAction_${newTab.id}`;
-      chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
+      chrome.storage.session.set({ [storageKey]: 'summarize_and_close' });
 
-      // Fallback watchdog: If tab doesn't extract within 8s, re-trigger extraction
+      // Fallback watchdog: If tab doesn't extract within 10s, re-trigger extraction or cleanup
       setTimeout(async () => {
         const check = await chrome.storage.session.get(storageKey);
-        if (check && check[storageKey] === 'summarize_and_replace') {
+        if (check && check[storageKey] === 'summarize_and_close') {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: newTab.id },
@@ -277,6 +277,27 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       return;
     }
 
+    if (mode === 'summarize_and_close') {
+      if (senderTabId) {
+        // Auto-close the temporary background watch tab
+        chrome.tabs.remove(senderTabId).catch(() => {});
+      }
+
+      chrome.storage.sync.get({ service: 'claude' }, (result) => {
+        const service = (result.service || 'claude').toLowerCase();
+        const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+
+        chrome.tabs.create({
+          url: url,
+          active: true
+        }, (newTab) => {
+          const storageKey = `extractedText_${newTab.id}`;
+          chrome.storage.session.set({ [storageKey]: message.text });
+        });
+      });
+      return;
+    }
+
     if (mode === 'summarize_and_replace') {
       if (senderTabId) {
         chrome.storage.sync.get({ service: 'claude' }, (result) => {
@@ -310,7 +331,12 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     });
   } else if (message.type === 'extractionError') {
     if (senderTabId) {
-      await chrome.storage.session.remove(`pendingAction_${senderTabId}`);
+      const storageKey = `pendingAction_${senderTabId}`;
+      const stored = await chrome.storage.session.get(storageKey);
+      if (stored && stored[storageKey] === 'summarize_and_close') {
+        chrome.tabs.remove(senderTabId).catch(() => {});
+      }
+      await chrome.storage.session.remove(storageKey);
       chrome.action.setBadgeText({ text: '!', tabId: senderTabId });
       chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: senderTabId });
       setTimeout(() => {
@@ -325,7 +351,8 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     // If this tab is a temporary YouTube watch tab triggered from Home page
     const actionKey = `pendingAction_${tabId}`;
     const actionResult = await chrome.storage.session.get(actionKey);
-    if (actionResult && actionResult[actionKey] === 'summarize_and_replace' && tab.url && tab.url.includes('youtube.com/watch')) {
+    const action = actionResult ? actionResult[actionKey] : null;
+    if ((action === 'summarize_and_close' || action === 'summarize_and_replace') && tab.url && tab.url.includes('youtube.com/watch')) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tabId },
