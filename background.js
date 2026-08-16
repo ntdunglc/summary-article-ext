@@ -283,16 +283,20 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         chrome.tabs.remove(senderTabId).catch(() => {});
       }
 
-      chrome.storage.sync.get({ service: 'claude' }, (result) => {
-        const service = (result.service || 'claude').toLowerCase();
-        const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        chrome.storage.sync.get({ service: 'claude' }, (result) => {
+          const service = (result.service || 'claude').toLowerCase();
+          const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+          const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
 
-        chrome.tabs.create({
-          url: url,
-          active: true
-        }, (newTab) => {
-          const storageKey = `extractedText_${newTab.id}`;
-          chrome.storage.session.set({ [storageKey]: message.text });
+          chrome.tabs.create({
+            url: url,
+            index: targetIndex + 1,
+            active: false
+          }, (newTab) => {
+            const storageKey = `extractedText_${newTab.id}`;
+            chrome.storage.session.set({ [storageKey]: message.text });
+          });
         });
       });
       return;
