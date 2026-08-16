@@ -216,15 +216,15 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.type === 'summarizeYouTubeFromHome') {
     chrome.tabs.create({
       url: message.videoUrl,
-      active: false
+      active: true
     }, (newTab) => {
       const storageKey = `pendingAction_${newTab.id}`;
-      chrome.storage.session.set({ [storageKey]: 'summarize_and_close' });
+      chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
 
-      // Fallback watchdog: If tab doesn't extract within 10s, re-trigger extraction or cleanup
+      // Fallback watchdog: If tab doesn't extract within 8s, re-trigger extraction or cleanup
       setTimeout(async () => {
         const check = await chrome.storage.session.get(storageKey);
-        if (check && check[storageKey] === 'summarize_and_close') {
+        if (check && check[storageKey] === 'summarize_and_replace') {
           try {
             await chrome.scripting.executeScript({
               target: { tabId: newTab.id },
@@ -274,31 +274,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           console.error("Failed to copy prompt to clipboard:", err);
         }
       }
-      return;
-    }
-
-    if (mode === 'summarize_and_close' || mode === 'summarize_and_close_running') {
-      if (senderTabId) {
-        // Auto-close the temporary background watch tab
-        chrome.tabs.remove(senderTabId).catch(() => {});
-      }
-
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        chrome.storage.sync.get({ service: 'claude' }, (result) => {
-          const service = (result.service || 'claude').toLowerCase();
-          const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
-          const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
-
-          chrome.tabs.create({
-            url: url,
-            index: targetIndex + 1,
-            active: false
-          }, (newTab) => {
-            const storageKey = `extractedText_${newTab.id}`;
-            chrome.storage.session.set({ [storageKey]: message.text });
-          });
-        });
-      });
       return;
     }
 
