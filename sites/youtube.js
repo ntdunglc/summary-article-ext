@@ -375,123 +375,137 @@ ${transcriptText}
         const style = document.createElement('style');
         style.id = '__yt_ai_summarize_styles__';
         style.textContent = `
-            .yt-ai-summarize-btn {
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                z-index: 25;
-                display: inline-flex;
-                align-items: center;
-                gap: 5px;
-                padding: 5px 9px;
-                background: rgba(15, 23, 42, 0.88);
-                color: #ffffff;
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 6px;
-                font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-                font-size: 12px;
-                font-weight: 500;
-                line-height: 1;
-                cursor: pointer;
-                backdrop-filter: blur(8px);
-                -webkit-backdrop-filter: blur(8px);
-                transition: all 0.2s ease;
-                opacity: 0.85;
-                user-select: none;
-                pointer-events: auto;
+            .yt-ai-summarize-badge {
+                position: absolute !important;
+                top: 8px !important;
+                left: 8px !important;
+                z-index: 50 !important;
+                display: inline-flex !important;
+                align-items: center !important;
+                gap: 5px !important;
+                padding: 5px 9px !important;
+                background: rgba(15, 23, 42, 0.9) !important;
+                color: #ffffff !important;
+                border: 1px solid rgba(56, 189, 248, 0.4) !important;
+                border-radius: 6px !important;
+                font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif !important;
+                font-size: 11px !important;
+                font-weight: 600 !important;
+                line-height: 1 !important;
+                cursor: pointer !important;
+                backdrop-filter: blur(8px) !important;
+                -webkit-backdrop-filter: blur(8px) !important;
+                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+                box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4) !important;
+                pointer-events: auto !important;
+                opacity: 0.95 !important;
             }
-            .yt-ai-summarize-btn:hover {
-                opacity: 1;
-                background: rgba(15, 23, 42, 0.98);
-                border-color: rgba(56, 189, 248, 0.6);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
-                transform: scale(1.04);
+            .yt-ai-summarize-badge:hover {
+                opacity: 1 !important;
+                background: rgba(15, 23, 42, 1) !important;
+                border-color: #38bdf8 !important;
+                box-shadow: 0 4px 12px rgba(56, 189, 248, 0.35) !important;
+                transform: scale(1.05) !important;
+                color: #38bdf8 !important;
             }
-            .yt-ai-summarize-btn svg {
-                stroke: #38bdf8;
+            .yt-ai-summarize-badge svg {
+                stroke: #38bdf8 !important;
+                flex-shrink: 0;
             }
-            .yt-ai-summarize-btn.is-loading {
-                opacity: 1;
-                background: rgba(2, 132, 199, 0.9);
-                border-color: #38bdf8;
-                cursor: wait;
+            .yt-ai-summarize-badge.is-loading {
+                background: rgba(2, 132, 199, 0.95) !important;
+                border-color: #38bdf8 !important;
+                cursor: wait !important;
+                color: #ffffff !important;
             }
         `;
-        document.head.appendChild(style);
+        (document.head || document.documentElement).appendChild(style);
     }
 
     function injectCardButtons() {
         ensureStyles();
 
-        const containers = document.querySelectorAll(
-            'ytd-thumbnail:not([data-ai-btn]), ' +
-            'ytd-rich-grid-media #thumbnail:not([data-ai-btn]), ' +
-            'ytd-video-renderer #thumbnail:not([data-ai-btn]), ' +
-            'ytd-grid-video-renderer #thumbnail:not([data-ai-btn]), ' +
-            '.yt-lockup-view-model-wiz__content-image:not([data-ai-btn]), ' +
-            'a#thumbnail:not([data-ai-btn])'
+        // Query all video card elements across modern & classic YouTube layouts
+        const cards = document.querySelectorAll(
+            'yt-lockup-view-model:not([data-ai-btn]), ' +
+            'ytd-rich-item-renderer:not([data-ai-btn]), ' +
+            'ytd-video-renderer:not([data-ai-btn]), ' +
+            'ytd-grid-video-renderer:not([data-ai-btn]), ' +
+            'ytd-compact-video-renderer:not([data-ai-btn])'
         );
 
-        containers.forEach((thumb) => {
-            if (thumb.dataset.aiBtn) return;
-            thumb.dataset.aiBtn = 'true';
+        cards.forEach((card) => {
+            // Find watch link with valid video ID
+            const link = card.querySelector(
+                'a[href*="/watch?v="], ' +
+                'a[href*="watch?v="], ' +
+                'a.ytLockupMetadataViewModelTitle, ' +
+                'a#video-title-link, ' +
+                'a#video-title, ' +
+                'a#thumbnail'
+            );
 
-            const link = thumb.closest('a[href*="/watch"]') ||
-                thumb.querySelector('a[href*="/watch"]') ||
-                thumb.closest('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model')?.querySelector('a[href*="/watch"]');
+            if (!link) return;
+            const href = link.getAttribute('href') || link.href;
+            if (!href) return;
 
-            if (!link || !link.href) return;
+            const match = href.match(/[?&]v=([a-zA-Z0-9_-]{11})/);
+            if (!match) return;
+            const videoId = match[1];
 
-            try {
-                const url = new URL(link.href, window.location.origin);
-                const videoId = url.searchParams.get('v');
-                if (!videoId) return;
+            // Find the best thumbnail container to host the top-left overlay badge
+            const thumb = card.querySelector(
+                '.yt-lockup-view-model-wiz__content-image, ' +
+                '.ytLockupViewModelContentImage, ' +
+                'ytd-thumbnail, ' +
+                '#thumbnail, ' +
+                'a.yt-lockup-view-model-wiz__content-image, ' +
+                'a#thumbnail'
+            ) || card;
 
-                const btn = document.createElement('button');
-                btn.className = 'yt-ai-summarize-btn';
-                btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
-                btn.title = 'Summarize with AI';
+            // Only mark card as processed once we actually inject the button
+            card.dataset.aiBtn = 'true';
 
-                btn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
+            const btn = document.createElement('button');
+            btn.className = 'yt-ai-summarize-badge';
+            btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+            btn.title = 'Summarize with AI';
 
-                    btn.classList.add('is-loading');
-                    btn.innerHTML = `<span>⏳ Summarizing...</span>`;
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
 
-                    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
-                    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-                        chrome.runtime.sendMessage({
-                            type: 'summarizeYouTubeFromHome',
-                            videoUrl: targetUrl,
-                            videoId: videoId
-                        });
-                    } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
-                        browser.runtime.sendMessage({
-                            type: 'summarizeYouTubeFromHome',
-                            videoUrl: targetUrl,
-                            videoId: videoId
-                        });
-                    }
+                btn.classList.add('is-loading');
+                btn.innerHTML = `<span>⏳ Summarizing...</span>`;
 
-                    setTimeout(() => {
-                        btn.classList.remove('is-loading');
-                        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
-                    }, 3000);
-                });
+                const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                const payload = {
+                    type: 'summarizeYouTubeFromHome',
+                    videoUrl: targetUrl,
+                    videoId: videoId
+                };
 
-                const computedPos = window.getComputedStyle(thumb).position;
-                if (computedPos === 'static') {
-                    thumb.style.position = 'relative';
+                if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                    chrome.runtime.sendMessage(payload);
+                } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
+                    browser.runtime.sendMessage(payload);
                 }
-                thumb.appendChild(btn);
-            } catch (err) {
-                // Ignore parse errors
+
+                setTimeout(() => {
+                    btn.classList.remove('is-loading');
+                    btn.innerHTML = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+                }, 4000);
+            });
+
+            const computedPos = window.getComputedStyle(thumb).position;
+            if (computedPos === 'static') {
+                thumb.style.position = 'relative';
             }
+            thumb.appendChild(btn);
         });
     }
 
     injectCardButtons();
-    setInterval(injectCardButtons, 1500);
+    setInterval(injectCardButtons, 1000);
     window.addEventListener('yt-navigate-finish', () => setTimeout(injectCardButtons, 500));
 })();
