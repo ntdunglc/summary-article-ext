@@ -128,7 +128,6 @@ function copyPromptToClipboardWithToast(text) {
 }
 
 async function runExtraction(tab, mode = 'open_tab') {
-  // 1. Safety check: Block internal browser pages
   if (!tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://') || tab.url.startsWith('about:') || tab.url.includes('chrome.google.com/webstore')) {
     console.warn("Cannot run on internal browser pages.");
     if (tab.id) {
@@ -145,8 +144,6 @@ async function runExtraction(tab, mode = 'open_tab') {
   await chrome.storage.session.set({ [`pendingAction_${tab.id}`]: mode });
 
   let siteType;
-
-  // 2. Routing logic for all supported sites
   if (tab.url.includes('youtube.com/watch')) {
     siteType = 'youtube';
   } else if (tab.url.includes('news.ycombinator.com/item')) {
@@ -160,14 +157,12 @@ async function runExtraction(tab, mode = 'open_tab') {
   } else if (tab.url.includes('chess.com/events/')) {
     siteType = 'chesscom';
   } else {
-    siteType = 'article'; // Applies to regular news sites AND removepaywalls.com
+    siteType = 'article';
   }
 
-  // ⭐ THE FIX: Only pierce iframes if the user is strictly on removepaywalls.com
   const needsAllFrames = tab.url.includes('removepaywalls.com');
 
   try {
-    // Inject Readability if needed
     if (siteType === 'article' || siteType === 'zillow') {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: needsAllFrames },
@@ -175,17 +170,17 @@ async function runExtraction(tab, mode = 'open_tab') {
       });
     }
 
-    // Inject the specific extractor script
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: needsAllFrames },
       files: [EXTRACTORS[siteType]]
     });
 
-    // Execute the extraction
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: needsAllFrames },
       func: (extractorName) => {
-        window[extractorName].extract();
+        if (window[extractorName]?.extract) {
+          window[extractorName].extract();
+        }
       },
       args: [siteType + 'Extractor']
     });
@@ -225,6 +220,27 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }, (newTab) => {
       const storageKey = `pendingAction_${newTab.id}`;
       chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
+
+      // Fallback watchdog: If tab doesn't extract within 5s, re-trigger extraction
+      setTimeout(async () => {
+        const check = await chrome.storage.session.get(storageKey);
+        if (check && check[storageKey] === 'summarize_and_replace') {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: newTab.id },
+              files: ['sites/youtube.js']
+            });
+            await chrome.scripting.executeScript({
+              target: { tabId: newTab.id },
+              func: () => {
+                if (window.youtubeExtractor?.extract) {
+                  window.youtubeExtractor.extract();
+                }
+              }
+            });
+          } catch (_) {}
+        }
+      }, 5000);
     });
     return;
   }
@@ -241,7 +257,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
 
     if (mode === 'copy_prompt') {
-      // Copy to clipboard & show toast notification on the active page
       if (senderTabId) {
         try {
           await chrome.scripting.executeScript({
@@ -263,7 +278,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
 
     if (mode === 'summarize_and_replace') {
-      // Navigate the temporary YouTube tab to the AI provider tab directly in the same tab
       if (senderTabId) {
         chrome.storage.sync.get({ service: 'claude' }, (result) => {
           const service = (result.service || 'claude').toLowerCase();
@@ -280,7 +294,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     // Default: 'open_tab'
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       chrome.storage.sync.get({ service: 'claude' }, (result) => {
-        const service = result.service.toLowerCase();
+        const service = (result.service || 'claude').toLowerCase();
         const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
         const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
 
@@ -313,6 +327,10 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
     const actionResult = await chrome.storage.session.get(actionKey);
     if (actionResult && actionResult[actionKey] === 'summarize_and_replace' && tab.url && tab.url.includes('youtube.com/watch')) {
       try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['sites/youtube.js']
+        });
         await chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: () => {
@@ -356,7 +374,9 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         await chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: (handlerName, text) => {
-            window[handlerName].input(text);
+            if (window[handlerName]?.input) {
+              window[handlerName].input(text);
+            }
           },
           args: [HANDLERS[service], textPayload]
         });

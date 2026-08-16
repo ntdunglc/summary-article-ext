@@ -142,67 +142,107 @@ Based on the information that follows, generate the summary.
         return 0;
     },
 
-    async getTranscriptDirectly() {
-        try {
-            const player = document.getElementById('movie_player');
-            const playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
-            const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+    async getTranscriptDirectly(maxRetries = 10, delayMs = 350) {
+        const fetchCaptionXml = async (url, fetchRetries = 3) => {
+            for (let fAttempt = 0; fAttempt < fetchRetries; fAttempt++) {
+                try {
+                    const response = await fetch(url);
+                    if (response.ok) {
+                        return await response.text();
+                    }
+                } catch (e) {
+                    console.warn(`Fetch caption attempt ${fAttempt + 1} failed:`, e);
+                }
+                await new Promise(r => setTimeout(r, 250));
+            }
+            return null;
+        };
 
-            if (captionTracks && captionTracks.length > 0) {
-                const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en')) || captionTracks[0];
-                if (enTrack && enTrack.baseUrl) {
-                    const response = await fetch(enTrack.baseUrl);
-                    const xmlText = await response.text();
-                    const parser = new DOMParser();
-                    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-                    const textNodes = xmlDoc.querySelectorAll('text');
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            try {
+                const player = document.getElementById('movie_player');
+                let playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
 
-                    if (textNodes.length > 0) {
-                        let transcriptText = '';
-                        let currentParagraph = '';
-                        let currentTimestamp = '';
-
-                        textNodes.forEach((node) => {
-                            const startSec = parseFloat(node.getAttribute('start') || '0');
-                            let text = (node.textContent || '')
-                                .replace(/&#39;/g, "'")
-                                .replace(/&quot;/g, '"')
-                                .replace(/&amp;/g, '&')
-                                .replace(/&lt;/g, '<')
-                                .replace(/&gt;/g, '>')
-                                .replace(/\s+/g, ' ')
-                                .trim();
-
-                            if (!text) return;
-
-                            const minutes = Math.floor(startSec / 60);
-                            const seconds = Math.floor(startSec % 60);
-                            const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
-
-                            if (currentParagraph === '') {
-                                currentTimestamp = timestamp;
+                // Fallback: Check for ytInitialPlayerResponse inside inline script tags
+                if (!playerResponse) {
+                    try {
+                        const scripts = Array.from(document.querySelectorAll('script'));
+                        for (const s of scripts) {
+                            if (s.textContent && s.textContent.includes('ytInitialPlayerResponse =')) {
+                                const match = s.textContent.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
+                                if (match) {
+                                    playerResponse = JSON.parse(match[1]);
+                                    break;
+                                }
                             }
-                            currentParagraph += text + ' ';
-
-                            if (currentParagraph.length > 250) {
-                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                                currentParagraph = '';
-                                currentTimestamp = '';
-                            }
-                        });
-
-                        if (currentParagraph) {
-                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
                         }
+                    } catch (_) {}
+                }
 
-                        if (transcriptText.trim()) {
-                            return transcriptText.trim();
+                const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+                if (captionTracks && captionTracks.length > 0) {
+                    const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en') || t.vssId?.includes('a.en')) || captionTracks[0];
+                    if (enTrack && enTrack.baseUrl) {
+                        const xmlText = await fetchCaptionXml(enTrack.baseUrl);
+                        if (xmlText) {
+                            const parser = new DOMParser();
+                            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                            const textNodes = xmlDoc.querySelectorAll('text');
+
+                            if (textNodes.length > 0) {
+                                let transcriptText = '';
+                                let currentParagraph = '';
+                                let currentTimestamp = '';
+
+                                textNodes.forEach((node) => {
+                                    const startSec = parseFloat(node.getAttribute('start') || '0');
+                                    let text = (node.textContent || '')
+                                        .replace(/&#39;/g, "'")
+                                        .replace(/&quot;/g, '"')
+                                        .replace(/&amp;/g, '&')
+                                        .replace(/&lt;/g, '<')
+                                        .replace(/&gt;/g, '>')
+                                        .replace(/\s+/g, ' ')
+                                        .trim();
+
+                                    if (!text) return;
+
+                                    const minutes = Math.floor(startSec / 60);
+                                    const seconds = Math.floor(startSec % 60);
+                                    const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+                                    if (currentParagraph === '') {
+                                        currentTimestamp = timestamp;
+                                    }
+                                    currentParagraph += text + ' ';
+
+                                    if (currentParagraph.length > 250) {
+                                        transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                                        currentParagraph = '';
+                                        currentTimestamp = '';
+                                    }
+                                });
+
+                                if (currentParagraph) {
+                                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                                }
+
+                                if (transcriptText.trim()) {
+                                    return transcriptText.trim();
+                                }
+                            }
                         }
                     }
                 }
+            } catch (err) {
+                console.warn(`Direct caption fetch attempt ${attempt + 1} failed:`, err);
             }
-        } catch (err) {
-            console.warn('Direct caption fetch failed:', err);
+
+            // Wait before next polling attempt
+            if (attempt < maxRetries - 1) {
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+            }
         }
         return null;
     },
@@ -248,7 +288,7 @@ Based on the information that follows, generate the summary.
 
         (async () => {
             try {
-                const titleElement = document.querySelector('#title h1, #title');
+                const titleElement = document.querySelector('#title h1, #title, ytd-watch-metadata #title');
                 const videoTitle = titleElement ? titleElement.textContent.trim() : document.title.replace(/ - YouTube$/, '');
 
                 const channelElement = document.querySelector('#channel-name #text, ytd-channel-name #text');
@@ -262,12 +302,12 @@ Based on the information that follows, generate the summary.
                 const descriptionText = descResult.text;
                 const descriptionLinks = descResult.links;
 
-                // 1. Attempt clean direct transcript extraction from player captions (fast, silent, no DOM mutations)
+                // 1. Attempt clean direct transcript extraction with polling retries
                 let transcriptText = await this.getTranscriptDirectly();
 
                 // 2. Fallback if captions are not returned
                 if (!transcriptText) {
-                    transcriptText = `Transcript could not be extracted directly. Please use the video URL to analyze the content: ${videoUrl}`;
+                    transcriptText = `Transcript could not be extracted directly (captions may be disabled or processing). Please use the video URL to analyze the content: ${videoUrl}`;
                 }
 
                 const extractionDate = new Date().toLocaleString();
@@ -332,9 +372,6 @@ ${transcriptText}
 (function () {
     if (window.top !== window.self) return;
 
-    const SPARKLE_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/><path d="M5 3v4M3 5h4M19 17v4M17 19h4"/></svg>`;
-    const SPINNER_ICON_SVG = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" stroke-opacity="0.25"/><path d="M12 3a9 9 0 0 1 9 9"/></svg>`;
-
     function ensureStyles() {
         if (document.getElementById('__yt_ai_summarize_styles__')) return;
         const style = document.createElement('style');
@@ -397,6 +434,19 @@ ${transcriptText}
                 flex-shrink: 0 !important;
             }
 
+            .yt-ai-summarize-badge .yt-ai-spinner {
+                display: none !important;
+            }
+
+            .yt-ai-summarize-badge.is-loading .yt-ai-sparkle {
+                display: none !important;
+            }
+
+            .yt-ai-summarize-badge.is-loading .yt-ai-spinner {
+                display: block !important;
+                animation: yt-ai-spin 1s linear infinite !important;
+            }
+
             .yt-ai-summarize-badge.is-loading {
                 opacity: 1 !important;
                 visibility: visible !important;
@@ -408,16 +458,57 @@ ${transcriptText}
                 transform: scale(1) !important;
             }
 
-            .yt-ai-summarize-badge.is-loading svg {
-                animation: yt-ai-spin 1s linear infinite !important;
-            }
-
             @keyframes yt-ai-spin {
                 from { transform: rotate(0deg); }
                 to { transform: rotate(360deg); }
             }
         `;
         (document.head || document.documentElement).appendChild(style);
+    }
+
+    function createSvgIcons() {
+        const svgNS = 'http://www.w3.org/2000/svg';
+
+        // Sparkle SVG
+        const sparkleSvg = document.createElementNS(svgNS, 'svg');
+        sparkleSvg.setAttribute('viewBox', '0 0 24 24');
+        sparkleSvg.setAttribute('fill', 'none');
+        sparkleSvg.setAttribute('stroke', 'currentColor');
+        sparkleSvg.setAttribute('stroke-width', '2.2');
+        sparkleSvg.setAttribute('stroke-linecap', 'round');
+        sparkleSvg.setAttribute('stroke-linejoin', 'round');
+        sparkleSvg.classList.add('yt-ai-sparkle');
+
+        const p1 = document.createElementNS(svgNS, 'path');
+        p1.setAttribute('d', 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z');
+        const p2 = document.createElementNS(svgNS, 'path');
+        p2.setAttribute('d', 'M5 3v4M3 5h4M19 17v4M17 19h4');
+        sparkleSvg.appendChild(p1);
+        sparkleSvg.appendChild(p2);
+
+        // Spinner SVG
+        const spinnerSvg = document.createElementNS(svgNS, 'svg');
+        spinnerSvg.setAttribute('viewBox', '0 0 24 24');
+        spinnerSvg.setAttribute('fill', 'none');
+        spinnerSvg.setAttribute('stroke', 'currentColor');
+        spinnerSvg.setAttribute('stroke-width', '2.5');
+        spinnerSvg.setAttribute('stroke-linecap', 'round');
+        spinnerSvg.setAttribute('stroke-linejoin', 'round');
+        spinnerSvg.classList.add('yt-ai-spinner');
+
+        const c = document.createElementNS(svgNS, 'circle');
+        c.setAttribute('cx', '12');
+        c.setAttribute('cy', '12');
+        c.setAttribute('r', '9');
+        c.setAttribute('stroke-opacity', '0.25');
+
+        const spPath = document.createElementNS(svgNS, 'path');
+        spPath.setAttribute('d', 'M12 3a9 9 0 0 1 9 9');
+
+        spinnerSvg.appendChild(c);
+        spinnerSvg.appendChild(spPath);
+
+        return { sparkleSvg, spinnerSvg };
     }
 
     function injectCardButtons() {
@@ -466,15 +557,17 @@ ${transcriptText}
 
             const btn = document.createElement('button');
             btn.className = 'yt-ai-summarize-badge';
-            btn.innerHTML = SPARKLE_ICON_SVG;
             btn.title = 'Summarize with AI';
+
+            const { sparkleSvg, spinnerSvg } = createSvgIcons();
+            btn.appendChild(sparkleSvg);
+            btn.appendChild(spinnerSvg);
 
             btn.addEventListener('click', (e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
                 btn.classList.add('is-loading');
-                btn.innerHTML = SPINNER_ICON_SVG;
 
                 const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
                 const payload = {
@@ -489,10 +582,10 @@ ${transcriptText}
                     browser.runtime.sendMessage(payload);
                 }
 
+                // Automatic safety reset after 6 seconds
                 setTimeout(() => {
                     btn.classList.remove('is-loading');
-                    btn.innerHTML = SPARKLE_ICON_SVG;
-                }, 4000);
+                }, 6000);
             });
 
             const computedPos = window.getComputedStyle(thumb).position;
