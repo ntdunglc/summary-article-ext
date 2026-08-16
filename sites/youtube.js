@@ -142,107 +142,77 @@ Based on the information that follows, generate the summary.
         return 0;
     },
 
-    async getTranscriptDirectly(maxRetries = 10, delayMs = 350) {
-        const fetchCaptionXml = async (url, fetchRetries = 3) => {
-            for (let fAttempt = 0; fAttempt < fetchRetries; fAttempt++) {
-                try {
-                    const response = await fetch(url);
+    async getTranscriptDirectly() {
+        try {
+            const player = document.getElementById('movie_player');
+            const playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
+            const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+            if (captionTracks && captionTracks.length > 0) {
+                const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en') || t.vssId?.includes('a.en')) || captionTracks[0];
+                if (enTrack && enTrack.baseUrl) {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 2500);
+
+                    const response = await fetch(enTrack.baseUrl, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+
                     if (response.ok) {
-                        return await response.text();
-                    }
-                } catch (e) {
-                    console.warn(`Fetch caption attempt ${fAttempt + 1} failed:`, e);
-                }
-                await new Promise(r => setTimeout(r, 250));
-            }
-            return null;
-        };
-
-        for (let attempt = 0; attempt < maxRetries; attempt++) {
-            try {
-                const player = document.getElementById('movie_player');
-                let playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
-
-                // Fallback: Check for ytInitialPlayerResponse inside inline script tags
-                if (!playerResponse) {
-                    try {
-                        const scripts = Array.from(document.querySelectorAll('script'));
-                        for (const s of scripts) {
-                            if (s.textContent && s.textContent.includes('ytInitialPlayerResponse =')) {
-                                const match = s.textContent.match(/ytInitialPlayerResponse\s*=\s*({.+?});/);
-                                if (match) {
-                                    playerResponse = JSON.parse(match[1]);
-                                    break;
-                                }
+                        const xmlText = await response.text();
+                        if (xmlText && xmlText.length > 0) {
+                            function decodeHtml(str) {
+                                return str
+                                    .replace(/&#39;/g, "'")
+                                    .replace(/&quot;/g, '"')
+                                    .replace(/&amp;/g, '&')
+                                    .replace(/&lt;/g, '<')
+                                    .replace(/&gt;/g, '>')
+                                    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
+                                    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+                                    .replace(/\s+/g, ' ')
+                                    .trim();
                             }
-                        }
-                    } catch (_) {}
-                }
 
-                const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+                            const regex = /<text\s+start="([\d\.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
+                            let match;
+                            let transcriptText = '';
+                            let currentParagraph = '';
+                            let currentTimestamp = '';
 
-                if (captionTracks && captionTracks.length > 0) {
-                    const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en') || t.vssId?.includes('a.en')) || captionTracks[0];
-                    if (enTrack && enTrack.baseUrl) {
-                        const xmlText = await fetchCaptionXml(enTrack.baseUrl);
-                        if (xmlText) {
-                            const parser = new DOMParser();
-                            const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
-                            const textNodes = xmlDoc.querySelectorAll('text');
+                            while ((match = regex.exec(xmlText)) !== null) {
+                                const startSec = parseFloat(match[1] || '0');
+                                const text = decodeHtml(match[2] || '');
+                                if (!text) continue;
 
-                            if (textNodes.length > 0) {
-                                let transcriptText = '';
-                                let currentParagraph = '';
-                                let currentTimestamp = '';
+                                const minutes = Math.floor(startSec / 60);
+                                const seconds = Math.floor(startSec % 60);
+                                const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
 
-                                textNodes.forEach((node) => {
-                                    const startSec = parseFloat(node.getAttribute('start') || '0');
-                                    let text = (node.textContent || '')
-                                        .replace(/&#39;/g, "'")
-                                        .replace(/&quot;/g, '"')
-                                        .replace(/&amp;/g, '&')
-                                        .replace(/&lt;/g, '<')
-                                        .replace(/&gt;/g, '>')
-                                        .replace(/\s+/g, ' ')
-                                        .trim();
+                                if (currentParagraph === '') {
+                                    currentTimestamp = timestamp;
+                                }
+                                currentParagraph += text + ' ';
 
-                                    if (!text) return;
-
-                                    const minutes = Math.floor(startSec / 60);
-                                    const seconds = Math.floor(startSec % 60);
-                                    const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
-
-                                    if (currentParagraph === '') {
-                                        currentTimestamp = timestamp;
-                                    }
-                                    currentParagraph += text + ' ';
-
-                                    if (currentParagraph.length > 250) {
-                                        transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                                        currentParagraph = '';
-                                        currentTimestamp = '';
-                                    }
-                                });
-
-                                if (currentParagraph) {
+                                if (currentParagraph.length > 250) {
                                     transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                                    currentParagraph = '';
+                                    currentTimestamp = '';
                                 }
+                            }
 
-                                if (transcriptText.trim()) {
-                                    return transcriptText.trim();
-                                }
+                            if (currentParagraph) {
+                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                            }
+
+                            if (transcriptText.trim()) {
+                                return transcriptText.trim();
                             }
                         }
                     }
                 }
-            } catch (err) {
-                console.warn(`Direct caption fetch attempt ${attempt + 1} failed:`, err);
             }
-
-            // Wait before next polling attempt
-            if (attempt < maxRetries - 1) {
-                await new Promise(resolve => setTimeout(resolve, delayMs));
-            }
+        } catch (err) {
+            console.warn('Direct caption fetch failed:', err);
         }
         return null;
     },
@@ -261,7 +231,7 @@ Based on the information that follows, generate the summary.
         };
 
         const getVideoInfo = () => {
-            const infoText = document.querySelector('ytd-watch-info-text #info');
+            const infoText = document.querySelector('ytd-watch-info-text #info, ytd-watch-metadata #info');
             return infoText ? infoText.textContent.trim() : 'N/A';
         };
 
@@ -302,12 +272,12 @@ Based on the information that follows, generate the summary.
                 const descriptionText = descResult.text;
                 const descriptionLinks = descResult.links;
 
-                // 1. Attempt clean direct transcript extraction with polling retries
+                // 1. Attempt clean direct transcript extraction
                 let transcriptText = await this.getTranscriptDirectly();
 
                 // 2. Fallback if captions are not returned
                 if (!transcriptText) {
-                    transcriptText = `Transcript could not be extracted directly (captions may be disabled or processing). Please use the video URL to analyze the content: ${videoUrl}`;
+                    transcriptText = `Transcript could not be extracted directly (captions may be disabled or processing). Please use the video URL and detailed description/chapters above to analyze the content: ${videoUrl}`;
                 }
 
                 const extractionDate = new Date().toLocaleString();
