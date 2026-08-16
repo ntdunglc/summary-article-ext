@@ -144,12 +144,12 @@ Based on the information that follows, generate the summary.
 
     async getTranscript() {
         const clickButtonWithText = (text) => {
-            const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span, yt-formatted-string, ytd-button-renderer, ytd-menu-service-item-renderer'));
+            const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span, yt-formatted-string, ytd-button-renderer, ytd-menu-service-item-renderer, yt-chip-cloud-chip-renderer'));
             const button = elements.find(el =>
                 el.textContent?.trim().toLowerCase() === text.toLowerCase()
             );
             if (button) {
-                button.click();
+                (button.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer, tp-yt-paper-item') || button).click();
                 return true;
             }
             return false;
@@ -165,95 +165,100 @@ Based on the information that follows, generate the summary.
             return null;
         };
 
-        const formatSegments = (segments) => {
-            if (!segments || segments.length === 0) return null;
-
+        // Extract and format transcript from raw text lines containing timestamps
+        const parseTranscriptFromText = (rawText) => {
+            if (!rawText || rawText.length < 20) return null;
+            const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
             let transcriptText = '';
             let currentParagraph = '';
             let currentTimestamp = '';
+            let foundCount = 0;
 
-            segments.forEach((segment) => {
-                const textElement = segment.querySelector(
-                    '.segment-text, ' +
-                    '.segment-content, ' +
-                    '.yt-transcript-segment-view-model-wiz__text, ' +
-                    'div[class*="segment"], ' +
-                    'div[class*="text"], ' +
-                    'yt-formatted-string.segment-text, ' +
-                    '[class*="segment-text"]'
-                ) || segment;
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
 
-                const timestampElement = segment.querySelector(
-                    '.segment-timestamp, ' +
-                    '.yt-transcript-segment-view-model-wiz__timestamp, ' +
-                    '[class*="timestamp"], ' +
-                    'yt-formatted-string.segment-timestamp'
-                );
-
-                let text = (textElement?.textContent || '').trim().replace(/\s+/g, ' ');
-                if (!text) return;
-
-                let timestamp = (timestampElement?.textContent || '').trim();
-
-                // If timestamp is embedded inside the text like "0:00 This is an NVIDIA..."
-                const match = text.match(/^(\d+:\d+(?::\d+)?)\s*(.*)/);
-                if (match) {
-                    if (!timestamp) timestamp = match[1];
-                    text = match[2];
+                // Skip navigation/header markers
+                if (/^(In this video|Chapters|Transcript|Search transcript|Search in video|English|Auto-generated)$/i.test(line)) {
+                    continue;
                 }
 
-                if (!text) return;
-
-                if (currentTimestamp && currentParagraph && timestamp && timestamp !== currentTimestamp) {
-                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                    currentParagraph = '';
+                // Format 1: Standalone timestamp line (e.g. "0:00")
+                const timeOnly = line.match(/^(\d+:\d+(?::\d+)?)$/);
+                if (timeOnly) {
+                    const ts = timeOnly[1];
+                    const nextLine = lines[i + 1] || '';
+                    if (nextLine && !/^(\d+:\d+(?::\d+)?)$/.test(nextLine)) {
+                        if (currentParagraph && currentParagraph.length > 200) {
+                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                            currentParagraph = '';
+                            currentTimestamp = '';
+                        }
+                        if (!currentTimestamp) currentTimestamp = ts;
+                        currentParagraph += (currentParagraph ? ' ' : '') + nextLine;
+                        foundCount++;
+                        i++; // skip nextLine
+                    }
+                    continue;
                 }
 
-                if (!currentTimestamp || (timestamp && timestamp !== currentTimestamp)) {
-                    currentTimestamp = timestamp || '0:00';
+                // Format 2: Line with timestamp prefix (e.g. "0:00 This is an NVIDIA B200.")
+                const timeWithText = line.match(/^(\d+:\d+(?::\d+)?)\s+(.*)/);
+                if (timeWithText) {
+                    const ts = timeWithText[1];
+                    const content = timeWithText[2].trim();
+                    if (content) {
+                        if (currentParagraph && currentParagraph.length > 200) {
+                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                            currentParagraph = '';
+                            currentTimestamp = '';
+                        }
+                        if (!currentTimestamp) currentTimestamp = ts;
+                        currentParagraph += (currentParagraph ? ' ' : '') + content;
+                        foundCount++;
+                    }
+                    continue;
                 }
 
-                currentParagraph += (currentParagraph ? ' ' : '') + text;
-
-                if (/[.!?]$/.test(text) || currentParagraph.length > 250) {
-                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                    currentParagraph = '';
+                // Format 3: Continuation speech text
+                if (foundCount > 0 && currentParagraph) {
+                    currentParagraph += ' ' + line;
                 }
-            });
+            }
 
             if (currentParagraph) {
-                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                transcriptText += `[${currentTimestamp || '0:00'}] ${currentParagraph.trim()}\n\n`;
             }
 
-            return transcriptText.trim().replace(/\n{3,}/g, '\n\n');
+            return (foundCount >= 2) ? transcriptText.trim() : null;
         };
 
-        const getExistingSegments = () => {
-            const segments = document.querySelectorAll(
-                'ytd-transcript-segment-renderer, ' +
-                '.ytd-transcript-segment-renderer, ' +
-                'yt-transcript-segment-view-model, ' +
-                'ytd-transcript-search-panel-renderer ytd-transcript-segment-renderer'
-            );
-            if (segments && segments.length > 0) {
-                const valid = Array.from(segments).filter(s => {
-                    const txt = s.textContent?.trim();
-                    return txt && !['Transcript', 'Search in video', 'Search transcript', 'Chapters'].includes(txt);
-                });
-                if (valid.length > 0) return valid;
+        const tryExtractFromActivePanels = () => {
+            // Find all potential transcript panel containers in modern and legacy YouTube layouts
+            const panels = Array.from(document.querySelectorAll(
+                '[target-id="PAmodern_transcript_view"], ' +
+                '[target-id="engagement-panel-searchable-transcript"], ' +
+                '[target-id*="transcript" i], ' +
+                'ytd-transcript-renderer, ' +
+                'ytd-transcript-search-panel-renderer, ' +
+                'ytd-transcript-segment-list-renderer, ' +
+                '#panels ytd-engagement-panel-section-list-renderer:not([visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"])'
+            ));
+
+            for (const panel of panels) {
+                const text = panel.innerText;
+                const parsed = parseTranscriptFromText(text);
+                if (parsed) return parsed;
             }
+
             return null;
         };
 
         try {
-            // 1. Check if transcript segments are ALREADY rendered in the DOM
-            let existing = getExistingSegments();
-            if (existing) {
-                const formatted = formatSegments(existing);
-                if (formatted) return formatted;
-            }
+            // 1. Check if transcript is ALREADY open and readable in the DOM
+            let directResult = tryExtractFromActivePanels();
+            if (directResult) return directResult;
 
-            // 2. Expand description if needed to expose "Show transcript" button
+            // 2. Expand description if collapsed
             const expandBtn = document.querySelector(
                 'ytd-text-inline-expander#description-inline-expander, ' +
                 '#description #expand, ' +
@@ -265,7 +270,7 @@ Based on the information that follows, generate the summary.
                 await new Promise(r => setTimeout(r, 250));
             }
 
-            // 3. Try clicking "Show transcript" in description
+            // 3. Click "Show transcript" button in description
             let clicked = false;
             const descSection = document.querySelector('ytd-video-description-transcript-section-renderer');
             if (descSection) {
@@ -278,7 +283,7 @@ Based on the information that follows, generate the summary.
                 clicked = clickButtonWithText('Show transcript') || clickButtonWithText('Transcript') || clickButtonWithText('Open transcript');
             }
 
-            // 4. If not found in description, click the 3-dots "More actions" menu
+            // 4. Fallback: Click 3-dots "More actions" menu -> Show transcript
             if (!clicked) {
                 const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"]', 1500);
                 if (menuButton) {
@@ -288,16 +293,20 @@ Based on the information that follows, generate the summary.
                 }
             }
 
-            // 5. Wait for transcript panel and poll for segments
-            await waitForElement('ytd-transcript-segment-list-renderer, ytd-transcript-segment-renderer, [target-id="engagement-panel-searchable-transcript"]', 3500);
+            // 5. If "In this video" panel opened on the Chapters tab, click the "Transcript" tab chip
+            await new Promise(r => setTimeout(r, 400));
+            const transcriptChip = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div')).find(el => {
+                return el.textContent?.trim() === 'Transcript' && el.children.length === 0;
+            });
+            if (transcriptChip) {
+                (transcriptChip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || transcriptChip).click();
+            }
 
-            for (let i = 0; i < 25; i++) {
+            // 6. Poll for rendered transcript lines in the panel (up to 4.5 seconds)
+            for (let i = 0; i < 30; i++) {
                 await new Promise(r => setTimeout(r, 150));
-                const segs = getExistingSegments();
-                if (segs && segs.length > 0) {
-                    const formatted = formatSegments(segs);
-                    if (formatted) return formatted;
-                }
+                const res = tryExtractFromActivePanels();
+                if (res) return res;
             }
         } catch (err) {
             console.warn('UI transcript extraction error:', err);
@@ -361,7 +370,7 @@ Based on the information that follows, generate the summary.
                 const descriptionText = descResult.text;
                 const descriptionLinks = descResult.links;
 
-                // 1. UI Click & Copy transcript extraction (No network fetch)
+                // 1. Pure UI Click & Copy transcript extraction
                 let transcriptText = await this.getTranscript();
 
                 // 2. Fallback if captions are not returned
@@ -539,7 +548,7 @@ ${transcriptText}
         sparkleSvg.classList.add('yt-ai-sparkle');
 
         const p1 = document.createElementNS(svgNS, 'path');
-        p1.setAttribute('d', 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z');
+        p1.setAttribute('d', 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z');
         const p2 = document.createElementNS(svgNS, 'path');
         p2.setAttribute('d', 'M5 3v4M3 5h4M19 17v4M17 19h4');
         sparkleSvg.appendChild(p1);
