@@ -142,41 +142,61 @@ Based on the information that follows, generate the summary.
         return 0;
     },
 
-    async getTranscriptDirectly() {
-        // Helper to format segments from DOM elements into timestamped paragraphs
-        const formatDomSegments = (elements) => {
-            if (!elements || elements.length === 0) return null;
+    async getTranscript() {
+        const clickButtonWithText = (text) => {
+            const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span, yt-formatted-string, ytd-button-renderer, ytd-menu-service-item-renderer'));
+            const button = elements.find(el =>
+                el.textContent?.trim().toLowerCase() === text.toLowerCase()
+            );
+            if (button) {
+                button.click();
+                return true;
+            }
+            return false;
+        };
+
+        const waitForElement = async (selector, timeout = 4000) => {
+            const start = Date.now();
+            while (Date.now() - start < timeout) {
+                const element = document.querySelector(selector);
+                if (element) return element;
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return null;
+        };
+
+        const formatSegments = (segments) => {
+            if (!segments || segments.length === 0) return null;
 
             let transcriptText = '';
             let currentParagraph = '';
             let currentTimestamp = '';
 
-            elements.forEach((seg) => {
-                const timestampEl = seg.querySelector(
+            segments.forEach((segment) => {
+                const textElement = segment.querySelector(
+                    '.segment-text, ' +
+                    '.segment-content, ' +
+                    '.yt-transcript-segment-view-model-wiz__text, ' +
+                    'div[class*="segment"], ' +
+                    'div[class*="text"], ' +
+                    'yt-formatted-string.segment-text, ' +
+                    '[class*="segment-text"]'
+                ) || segment;
+
+                const timestampElement = segment.querySelector(
                     '.segment-timestamp, ' +
                     '.yt-transcript-segment-view-model-wiz__timestamp, ' +
                     '[class*="timestamp"], ' +
                     'yt-formatted-string.segment-timestamp'
                 );
-                const textEl = seg.querySelector(
-                    '.segment-text, ' +
-                    '.yt-transcript-segment-view-model-wiz__text, ' +
-                    '[class*="segment-text"], ' +
-                    '[class*="text"], ' +
-                    'yt-formatted-string.segment-text'
-                ) || seg;
 
-                const rawText = (textEl?.textContent || seg.textContent || '')
-                    .trim()
-                    .replace(/\s+/g, ' ');
+                let text = (textElement?.textContent || '').trim().replace(/\s+/g, ' ');
+                if (!text) return;
 
-                if (!rawText) return;
+                let timestamp = (timestampElement?.textContent || '').trim();
 
-                let timestamp = (timestampEl?.textContent || '').trim();
-                let text = rawText;
-
-                // Handle composite text e.g. "0:00 This is an NVIDIA..."
-                const match = rawText.match(/^(\d+:\d+(?::\d+)?)\s*(.*)/);
+                // If timestamp is embedded inside the text like "0:00 This is an NVIDIA..."
+                const match = text.match(/^(\d+:\d+(?::\d+)?)\s*(.*)/);
                 if (match) {
                     if (!timestamp) timestamp = match[1];
                     text = match[2];
@@ -184,15 +204,20 @@ Based on the information that follows, generate the summary.
 
                 if (!text) return;
 
-                if (currentParagraph === '') {
-                    currentTimestamp = timestamp || '0:00';
-                }
-                currentParagraph += text + ' ';
-
-                if (currentParagraph.length > 250) {
+                if (currentTimestamp && currentParagraph && timestamp && timestamp !== currentTimestamp) {
                     transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
                     currentParagraph = '';
-                    currentTimestamp = '';
+                }
+
+                if (!currentTimestamp || (timestamp && timestamp !== currentTimestamp)) {
+                    currentTimestamp = timestamp || '0:00';
+                }
+
+                currentParagraph += (currentParagraph ? ' ' : '') + text;
+
+                if (/[.!?]$/.test(text) || currentParagraph.length > 250) {
+                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                    currentParagraph = '';
                 }
             });
 
@@ -200,21 +225,19 @@ Based on the information that follows, generate the summary.
                 transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
             }
 
-            return transcriptText.trim() ? transcriptText.trim() : null;
+            return transcriptText.trim().replace(/\n{3,}/g, '\n\n');
         };
 
-        const queryDomSegments = () => {
-            const list = document.querySelectorAll(
+        const getExistingSegments = () => {
+            const segments = document.querySelectorAll(
                 'ytd-transcript-segment-renderer, ' +
                 '.ytd-transcript-segment-renderer, ' +
                 'yt-transcript-segment-view-model, ' +
-                'ytd-transcript-search-panel-renderer ytd-transcript-segment-renderer, ' +
-                '[target-id="engagement-panel-searchable-transcript"] [role="button"]'
+                'ytd-transcript-search-panel-renderer ytd-transcript-segment-renderer'
             );
-
-            if (list && list.length > 0) {
-                const valid = Array.from(list).filter(el => {
-                    const txt = el.textContent?.trim();
+            if (segments && segments.length > 0) {
+                const valid = Array.from(segments).filter(s => {
+                    const txt = s.textContent?.trim();
                     return txt && !['Transcript', 'Search in video', 'Search transcript', 'Chapters'].includes(txt);
                 });
                 if (valid.length > 0) return valid;
@@ -222,141 +245,62 @@ Based on the information that follows, generate the summary.
             return null;
         };
 
-        // 1. Check if transcript segments are ALREADY rendered in the DOM
-        const initialDomSegments = queryDomSegments();
-        if (initialDomSegments) {
-            const formatted = formatDomSegments(initialDomSegments);
-            if (formatted) return formatted;
-        }
-
-        // 2. Fast caption XML fetch via player caption tracks
         try {
-            const player = document.getElementById('movie_player');
-            const playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
-            const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
-
-            if (captionTracks && captionTracks.length > 0) {
-                const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en') || t.vssId?.includes('a.en')) || captionTracks[0];
-                if (enTrack && enTrack.baseUrl) {
-                    const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 2000);
-
-                    const response = await fetch(enTrack.baseUrl, { signal: controller.signal });
-                    clearTimeout(timeoutId);
-
-                    if (response.ok) {
-                        const xmlText = await response.text();
-                        if (xmlText && xmlText.length > 0) {
-                            function decodeHtml(str) {
-                                return str
-                                    .replace(/&#39;/g, "'")
-                                    .replace(/&quot;/g, '"')
-                                    .replace(/&amp;/g, '&')
-                                    .replace(/&lt;/g, '<')
-                                    .replace(/&gt;/g, '>')
-                                    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
-                                    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
-                                    .replace(/\s+/g, ' ')
-                                    .trim();
-                            }
-
-                            const regex = /<text\s+start="([\d\.]+)"[^>]*>([\s\S]*?)<\/text>/gi;
-                            let match;
-                            let transcriptText = '';
-                            let currentParagraph = '';
-                            let currentTimestamp = '';
-
-                            while ((match = regex.exec(xmlText)) !== null) {
-                                const startSec = parseFloat(match[1] || '0');
-                                const text = decodeHtml(match[2] || '');
-                                if (!text) continue;
-
-                                const minutes = Math.floor(startSec / 60);
-                                const seconds = Math.floor(startSec % 60);
-                                const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
-
-                                if (currentParagraph === '') {
-                                    currentTimestamp = timestamp;
-                                }
-                                currentParagraph += text + ' ';
-
-                                if (currentParagraph.length > 250) {
-                                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                                    currentParagraph = '';
-                                    currentTimestamp = '';
-                                }
-                            }
-
-                            if (currentParagraph) {
-                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                            }
-
-                            if (transcriptText.trim()) {
-                                return transcriptText.trim();
-                            }
-                        }
-                    }
-                }
+            // 1. Check if transcript segments are ALREADY rendered in the DOM
+            let existing = getExistingSegments();
+            if (existing) {
+                const formatted = formatSegments(existing);
+                if (formatted) return formatted;
             }
-        } catch (err) {
-            console.warn('Direct caption fetch failed, falling back to UI extraction:', err);
-        }
 
-        // 3. UI Fallback: Trigger and extract from YouTube Transcript Panel
-        try {
-            // Expand description if necessary
-            const expander = document.querySelector(
+            // 2. Expand description if needed to expose "Show transcript" button
+            const expandBtn = document.querySelector(
                 'ytd-text-inline-expander#description-inline-expander, ' +
                 '#description #expand, ' +
                 'tp-yt-paper-button#expand, ' +
                 'ytd-text-inline-expander'
             );
-            if (expander) {
-                expander.click();
+            if (expandBtn) {
+                expandBtn.click();
                 await new Promise(r => setTimeout(r, 250));
             }
 
-            // Find Show Transcript or Transcript buttons
-            const candidates = Array.from(document.querySelectorAll(
-                'ytd-video-description-transcript-section-renderer button, ' +
-                'ytd-video-description-transcript-section-renderer, ' +
-                'button[aria-label*="transcript" i], ' +
-                'ytd-button-renderer button, ' +
-                'tp-yt-paper-item, ' +
-                'yt-chip-cloud-chip-renderer, ' +
-                'button, ' +
-                'yt-formatted-string'
-            ));
+            // 3. Try clicking "Show transcript" in description
+            let clicked = false;
+            const descSection = document.querySelector('ytd-video-description-transcript-section-renderer');
+            if (descSection) {
+                const btn = descSection.querySelector('button, [role="button"]') || descSection;
+                btn.click();
+                clicked = true;
+            }
 
-            const transcriptBtn = candidates.find(el => {
-                const text = el.textContent?.trim().toLowerCase() || '';
-                return text === 'show transcript' || text === 'transcript' || text === 'open transcript' || text.includes('show transcript');
-            });
+            if (!clicked) {
+                clicked = clickButtonWithText('Show transcript') || clickButtonWithText('Transcript') || clickButtonWithText('Open transcript');
+            }
 
-            if (transcriptBtn) {
-                transcriptBtn.click();
-            } else {
-                const moreBtn = document.querySelector('button[aria-label="More actions"], #actions button[aria-label*="More"]');
-                if (moreBtn) {
-                    moreBtn.click();
-                    await new Promise(r => setTimeout(r, 250));
-                    const menuItems = Array.from(document.querySelectorAll('tp-yt-paper-item, ytd-menu-service-item-renderer'));
-                    const menuTranscript = menuItems.find(b => b.textContent && b.textContent.toLowerCase().includes('transcript'));
-                    if (menuTranscript) menuTranscript.click();
+            // 4. If not found in description, click the 3-dots "More actions" menu
+            if (!clicked) {
+                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"]', 1500);
+                if (menuButton) {
+                    menuButton.click();
+                    await new Promise(r => setTimeout(r, 300));
+                    clicked = clickButtonWithText('Show transcript') || clickButtonWithText('Open transcript') || clickButtonWithText('Transcript');
                 }
             }
 
-            // Poll for rendered segments in the DOM (up to 3 seconds)
-            for (let i = 0; i < 20; i++) {
+            // 5. Wait for transcript panel and poll for segments
+            await waitForElement('ytd-transcript-segment-list-renderer, ytd-transcript-segment-renderer, [target-id="engagement-panel-searchable-transcript"]', 3500);
+
+            for (let i = 0; i < 25; i++) {
                 await new Promise(r => setTimeout(r, 150));
-                const segs = queryDomSegments();
-                if (segs) {
-                    const formatted = formatDomSegments(segs);
+                const segs = getExistingSegments();
+                if (segs && segs.length > 0) {
+                    const formatted = formatSegments(segs);
                     if (formatted) return formatted;
                 }
             }
-        } catch (uiErr) {
-            console.warn('UI transcript extraction failed:', uiErr);
+        } catch (err) {
+            console.warn('UI transcript extraction error:', err);
         }
 
         return null;
@@ -417,8 +361,8 @@ Based on the information that follows, generate the summary.
                 const descriptionText = descResult.text;
                 const descriptionLinks = descResult.links;
 
-                // 1. Multi-layer transcript extraction (DOM, Network, UI Automation)
-                let transcriptText = await this.getTranscriptDirectly();
+                // 1. UI Click & Copy transcript extraction (No network fetch)
+                let transcriptText = await this.getTranscript();
 
                 // 2. Fallback if captions are not returned
                 if (!transcriptText) {
@@ -595,7 +539,7 @@ ${transcriptText}
         sparkleSvg.classList.add('yt-ai-sparkle');
 
         const p1 = document.createElementNS(svgNS, 'path');
-        p1.setAttribute('d', 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z');
+        p1.setAttribute('d', 'm12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z');
         const p2 = document.createElementNS(svgNS, 'path');
         p2.setAttribute('d', 'M5 3v4M3 5h4M19 17v4M17 19h4');
         sparkleSvg.appendChild(p1);
