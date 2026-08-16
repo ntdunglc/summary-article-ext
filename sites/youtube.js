@@ -143,6 +143,93 @@ Based on the information that follows, generate the summary.
     },
 
     async getTranscriptDirectly() {
+        // Helper to format segments from DOM elements into timestamped paragraphs
+        const formatDomSegments = (elements) => {
+            if (!elements || elements.length === 0) return null;
+
+            let transcriptText = '';
+            let currentParagraph = '';
+            let currentTimestamp = '';
+
+            elements.forEach((seg) => {
+                const timestampEl = seg.querySelector(
+                    '.segment-timestamp, ' +
+                    '.yt-transcript-segment-view-model-wiz__timestamp, ' +
+                    '[class*="timestamp"], ' +
+                    'yt-formatted-string.segment-timestamp'
+                );
+                const textEl = seg.querySelector(
+                    '.segment-text, ' +
+                    '.yt-transcript-segment-view-model-wiz__text, ' +
+                    '[class*="segment-text"], ' +
+                    '[class*="text"], ' +
+                    'yt-formatted-string.segment-text'
+                ) || seg;
+
+                const rawText = (textEl?.textContent || seg.textContent || '')
+                    .trim()
+                    .replace(/\s+/g, ' ');
+
+                if (!rawText) return;
+
+                let timestamp = (timestampEl?.textContent || '').trim();
+                let text = rawText;
+
+                // Handle composite text e.g. "0:00 This is an NVIDIA..."
+                const match = rawText.match(/^(\d+:\d+(?::\d+)?)\s*(.*)/);
+                if (match) {
+                    if (!timestamp) timestamp = match[1];
+                    text = match[2];
+                }
+
+                if (!text) return;
+
+                if (currentParagraph === '') {
+                    currentTimestamp = timestamp || '0:00';
+                }
+                currentParagraph += text + ' ';
+
+                if (currentParagraph.length > 250) {
+                    transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                    currentParagraph = '';
+                    currentTimestamp = '';
+                }
+            });
+
+            if (currentParagraph) {
+                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+            }
+
+            return transcriptText.trim() ? transcriptText.trim() : null;
+        };
+
+        const queryDomSegments = () => {
+            const list = document.querySelectorAll(
+                'ytd-transcript-segment-renderer, ' +
+                '.ytd-transcript-segment-renderer, ' +
+                'yt-transcript-segment-view-model, ' +
+                'ytd-transcript-search-panel-renderer ytd-transcript-segment-renderer, ' +
+                '[target-id="engagement-panel-searchable-transcript"] [role="button"]'
+            );
+
+            if (list && list.length > 0) {
+                const valid = Array.from(list).filter(el => {
+                    const txt = el.textContent?.trim();
+                    return txt && !['Transcript', 'Search in video', 'Search transcript', 'Chapters'].includes(txt);
+                });
+                if (valid.length > 0) return valid;
+            }
+            return null;
+        };
+
+        // 1. Check if transcript segments are ALREADY rendered in the DOM
+        const initialDomSegments = queryDomSegments();
+        if (initialDomSegments) {
+            const formatted = formatDomSegments(initialDomSegments);
+            if (formatted) return formatted;
+        }
+
+        // 2. Fast caption XML fetch via player caption tracks
         try {
             const player = document.getElementById('movie_player');
             const playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
@@ -152,7 +239,7 @@ Based on the information that follows, generate the summary.
                 const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en') || t.vssId?.includes('a.en')) || captionTracks[0];
                 if (enTrack && enTrack.baseUrl) {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 2500);
+                    const timeoutId = setTimeout(() => controller.abort(), 2000);
 
                     const response = await fetch(enTrack.baseUrl, { signal: controller.signal });
                     clearTimeout(timeoutId);
@@ -212,8 +299,66 @@ Based on the information that follows, generate the summary.
                 }
             }
         } catch (err) {
-            console.warn('Direct caption fetch failed:', err);
+            console.warn('Direct caption fetch failed, falling back to UI extraction:', err);
         }
+
+        // 3. UI Fallback: Trigger and extract from YouTube Transcript Panel
+        try {
+            // Expand description if necessary
+            const expander = document.querySelector(
+                'ytd-text-inline-expander#description-inline-expander, ' +
+                '#description #expand, ' +
+                'tp-yt-paper-button#expand, ' +
+                'ytd-text-inline-expander'
+            );
+            if (expander) {
+                expander.click();
+                await new Promise(r => setTimeout(r, 250));
+            }
+
+            // Find Show Transcript or Transcript buttons
+            const candidates = Array.from(document.querySelectorAll(
+                'ytd-video-description-transcript-section-renderer button, ' +
+                'ytd-video-description-transcript-section-renderer, ' +
+                'button[aria-label*="transcript" i], ' +
+                'ytd-button-renderer button, ' +
+                'tp-yt-paper-item, ' +
+                'yt-chip-cloud-chip-renderer, ' +
+                'button, ' +
+                'yt-formatted-string'
+            ));
+
+            const transcriptBtn = candidates.find(el => {
+                const text = el.textContent?.trim().toLowerCase() || '';
+                return text === 'show transcript' || text === 'transcript' || text === 'open transcript' || text.includes('show transcript');
+            });
+
+            if (transcriptBtn) {
+                transcriptBtn.click();
+            } else {
+                const moreBtn = document.querySelector('button[aria-label="More actions"], #actions button[aria-label*="More"]');
+                if (moreBtn) {
+                    moreBtn.click();
+                    await new Promise(r => setTimeout(r, 250));
+                    const menuItems = Array.from(document.querySelectorAll('tp-yt-paper-item, ytd-menu-service-item-renderer'));
+                    const menuTranscript = menuItems.find(b => b.textContent && b.textContent.toLowerCase().includes('transcript'));
+                    if (menuTranscript) menuTranscript.click();
+                }
+            }
+
+            // Poll for rendered segments in the DOM (up to 3 seconds)
+            for (let i = 0; i < 20; i++) {
+                await new Promise(r => setTimeout(r, 150));
+                const segs = queryDomSegments();
+                if (segs) {
+                    const formatted = formatDomSegments(segs);
+                    if (formatted) return formatted;
+                }
+            }
+        } catch (uiErr) {
+            console.warn('UI transcript extraction failed:', uiErr);
+        }
+
         return null;
     },
 
@@ -272,7 +417,7 @@ Based on the information that follows, generate the summary.
                 const descriptionText = descResult.text;
                 const descriptionLinks = descResult.links;
 
-                // 1. Attempt clean direct transcript extraction
+                // 1. Multi-layer transcript extraction (DOM, Network, UI Automation)
                 let transcriptText = await this.getTranscriptDirectly();
 
                 // 2. Fallback if captions are not returned
