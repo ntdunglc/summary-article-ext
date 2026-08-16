@@ -216,12 +216,12 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   if (message.type === 'summarizeYouTubeFromHome') {
     chrome.tabs.create({
       url: message.videoUrl,
-      active: false
+      active: true
     }, (newTab) => {
       const storageKey = `pendingAction_${newTab.id}`;
       chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
 
-      // Fallback watchdog: If tab doesn't extract within 5s, re-trigger extraction
+      // Fallback watchdog: If tab doesn't extract within 8s, re-trigger extraction
       setTimeout(async () => {
         const check = await chrome.storage.session.get(storageKey);
         if (check && check[storageKey] === 'summarize_and_replace') {
@@ -240,7 +240,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
             });
           } catch (_) {}
         }
-      }, 5000);
+      }, 8000);
     });
     return;
   }
@@ -351,7 +351,7 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
 
     if (textPayload) {
       let service;
-      if (tab.url.includes('claude.ai/new')) {
+      if (tab.url.includes('claude.ai')) {
         service = 'claude';
       } else if (tab.url.includes('chat.deepseek.com')) {
         service = 'deepseek';

@@ -259,20 +259,22 @@ Based on the information that follows, generate the summary.
             if (directResult) return directResult;
 
             // 2. Expand description if collapsed
-            const expandBtn = document.querySelector(
+            const expandBtn = await waitForElement(
                 'ytd-text-inline-expander#description-inline-expander, ' +
                 '#description #expand, ' +
                 'tp-yt-paper-button#expand, ' +
-                'ytd-text-inline-expander'
+                'ytd-text-inline-expander, ' +
+                '#description',
+                3500
             );
             if (expandBtn) {
                 expandBtn.click();
-                await new Promise(r => setTimeout(r, 250));
+                await new Promise(r => setTimeout(r, 300));
             }
 
             // 3. Click "Show transcript" button in description
             let clicked = false;
-            const descSection = document.querySelector('ytd-video-description-transcript-section-renderer');
+            const descSection = await waitForElement('ytd-video-description-transcript-section-renderer', 2000);
             if (descSection) {
                 const btn = descSection.querySelector('button, [role="button"]') || descSection;
                 btn.click();
@@ -285,7 +287,7 @@ Based on the information that follows, generate the summary.
 
             // 4. Fallback: Click 3-dots "More actions" menu -> Show transcript
             if (!clicked) {
-                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"]', 1500);
+                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"]', 2000);
                 if (menuButton) {
                     menuButton.click();
                     await new Promise(r => setTimeout(r, 300));
@@ -294,17 +296,26 @@ Based on the information that follows, generate the summary.
             }
 
             // 5. If "In this video" panel opened on the Chapters tab, click the "Transcript" tab chip
-            await new Promise(r => setTimeout(r, 400));
-            const transcriptChip = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div')).find(el => {
-                return el.textContent?.trim() === 'Transcript' && el.children.length === 0;
-            });
-            if (transcriptChip) {
-                (transcriptChip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || transcriptChip).click();
-            }
+            const findAndClickTranscriptTab = () => {
+                const transcriptChip = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div')).find(el => {
+                    return el.textContent?.trim() === 'Transcript' && el.children.length === 0;
+                });
+                if (transcriptChip) {
+                    (transcriptChip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || transcriptChip).click();
+                    return true;
+                }
+                return false;
+            };
 
-            // 6. Poll for rendered transcript lines in the panel (up to 4.5 seconds)
+            await new Promise(r => setTimeout(r, 400));
+            findAndClickTranscriptTab();
+
+            // 6. Poll for rendered transcript lines in the panel (up to 6 seconds)
             for (let i = 0; i < 30; i++) {
-                await new Promise(r => setTimeout(r, 150));
+                await new Promise(r => setTimeout(r, 200));
+                if (i === 3 || i === 8) {
+                    findAndClickTranscriptTab();
+                }
                 const res = tryExtractFromActivePanels();
                 if (res) return res;
             }
@@ -316,6 +327,19 @@ Based on the information that follows, generate the summary.
     },
 
     extract() {
+        if (this._isExtracting) return;
+        this._isExtracting = true;
+
+        const waitForElement = async (selector, timeout = 7000) => {
+            const start = Date.now();
+            while (Date.now() - start < timeout) {
+                const element = document.querySelector(selector);
+                if (element) return element;
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+            return null;
+        };
+
         const getVideoDurationFormatted = () => {
             const duration = this.getDurationInSeconds();
             if (!duration || duration <= 0) return 'N/A';
@@ -356,6 +380,10 @@ Based on the information that follows, generate the summary.
 
         (async () => {
             try {
+                // Ensure page metadata and player components are mounted before extracting
+                await waitForElement('ytd-watch-metadata, #description-inline-expander, #movie_player, #title', 7000);
+                await new Promise(r => setTimeout(r, 400));
+
                 const titleElement = document.querySelector('#title h1, #title, ytd-watch-metadata #title');
                 const videoTitle = titleElement ? titleElement.textContent.trim() : document.title.replace(/ - YouTube$/, '');
 
@@ -431,6 +459,8 @@ ${transcriptText}
                     error: 'Failed to extract video data',
                     details: error.message
                 });
+            } finally {
+                this._isExtracting = false;
             }
         })();
     }
