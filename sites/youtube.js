@@ -4,7 +4,7 @@ window.youtubeExtractor = {
 
 Your output must strictly follow the markdown template below. Do not add any introductory or concluding remarks outside of this template. Make sure your output has all the sections and no duplicate sections.
 
-<template>
+===template===
 ### Video Metadata
 **Title:** [YouTube Video Title]
 **Channel:** [YouTube Channel Name]
@@ -99,42 +99,118 @@ Distill actionable advice from the video, tailored for relevant audiences. **Omi
 ### Footnotes
 - List all the external URLs that were read to ground the facts and background of this video, numbered sequentially.
 - Format: [n] [URL]
-</template>
+==end of template===
 
 Based on the information that follows, generate the summary.
 `;
     },
 
+    getDurationInSeconds() {
+        const player = document.getElementById('movie_player');
+        if (player && typeof player.getDuration === 'function') {
+            const d = player.getDuration();
+            if (typeof d === 'number' && !isNaN(d) && d > 0) return d;
+        }
+
+        const isAd = document.querySelector('.ad-showing, .ad-interrupting');
+        const video = document.querySelector('video.html5-main-video, video');
+        if (!isAd && video && video.duration && !isNaN(video.duration) && video.duration > 0) {
+            return video.duration;
+        }
+
+        const timeDisplay = document.querySelector('.ytp-time-duration');
+        if (timeDisplay && timeDisplay.textContent) {
+            const parts = timeDisplay.textContent.trim().split(':').map(Number);
+            if (parts.every(n => !isNaN(n))) {
+                if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+                if (parts.length === 2) return parts[0] * 60 + parts[1];
+            }
+        }
+
+        const metaDuration = document.querySelector('meta[itemprop="duration"]')?.getAttribute('content');
+        if (metaDuration) {
+            const match = metaDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+            if (match) {
+                const hours = parseInt(match[1] || '0', 10);
+                const mins = parseInt(match[2] || '0', 10);
+                const secs = parseInt(match[3] || '0', 10);
+                const total = hours * 3600 + mins * 60 + secs;
+                if (total > 0) return total;
+            }
+        }
+
+        return 0;
+    },
+
+    async getTranscriptDirectly() {
+        try {
+            const player = document.getElementById('movie_player');
+            const playerResponse = player?.getPlayerResponse?.() || window.ytInitialPlayerResponse;
+            const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+
+            if (captionTracks && captionTracks.length > 0) {
+                const enTrack = captionTracks.find(t => t.languageCode === 'en' || t.vssId?.includes('.en')) || captionTracks[0];
+                if (enTrack && enTrack.baseUrl) {
+                    const response = await fetch(enTrack.baseUrl);
+                    const xmlText = await response.text();
+                    const parser = new DOMParser();
+                    const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+                    const textNodes = xmlDoc.querySelectorAll('text');
+
+                    if (textNodes.length > 0) {
+                        let transcriptText = '';
+                        let currentParagraph = '';
+                        let currentTimestamp = '';
+
+                        textNodes.forEach((node) => {
+                            const startSec = parseFloat(node.getAttribute('start') || '0');
+                            let text = (node.textContent || '')
+                                .replace(/&#39;/g, "'")
+                                .replace(/&quot;/g, '"')
+                                .replace(/&amp;/g, '&')
+                                .replace(/&lt;/g, '<')
+                                .replace(/&gt;/g, '>')
+                                .replace(/\s+/g, ' ')
+                                .trim();
+
+                            if (!text) return;
+
+                            const minutes = Math.floor(startSec / 60);
+                            const seconds = Math.floor(startSec % 60);
+                            const timestamp = `${minutes}:${String(seconds).padStart(2, '0')}`;
+
+                            if (currentParagraph === '') {
+                                currentTimestamp = timestamp;
+                            }
+                            currentParagraph += text + ' ';
+
+                            if (currentParagraph.length > 250) {
+                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                                currentParagraph = '';
+                                currentTimestamp = '';
+                            }
+                        });
+
+                        if (currentParagraph) {
+                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
+                        }
+
+                        if (transcriptText.trim()) {
+                            return transcriptText.trim();
+                        }
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Direct caption fetch failed:', err);
+        }
+        return null;
+    },
+
     extract() {
-        const clickButtonWithText = async (text) => {
-            const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span'));
-            const button = elements.find(el =>
-                el.textContent?.trim().toLowerCase() === text.toLowerCase()
-            );
-            if (button) {
-                button.click();
-                return true;
-            }
-            return false;
-        };
-
-        const waitForElement = async (selector, timeout = 5000) => {
-            const start = Date.now();
-            while (Date.now() - start < timeout) {
-                const element = document.querySelector(selector);
-                if (element) return element;
-                await new Promise(resolve => setTimeout(resolve, 100));
-            }
-            return null;
-        };
-
-        const sleep = (ms) => new Promise(r => setTimeout(r, ms));
-
-        const getVideoDuration = () => {
-            const video = document.querySelector('video');
-            if (!video) return 'N/A';
-            const duration = video.duration;
-            if (!duration || isNaN(duration)) return 'N/A';
+        const getVideoDurationFormatted = () => {
+            const duration = this.getDurationInSeconds();
+            if (!duration || duration <= 0) return 'N/A';
             const hours = Math.floor(duration / 3600);
             const minutes = Math.floor((duration % 3600) / 60);
             const seconds = Math.floor(duration % 60);
@@ -146,29 +222,10 @@ Based on the information that follows, generate the summary.
 
         const getVideoInfo = () => {
             const infoText = document.querySelector('ytd-watch-info-text #info');
-            return infoText ? infoText.textContent : 'N/A';
+            return infoText ? infoText.textContent.trim() : 'N/A';
         };
 
-        const expandDescription = async () => {
-            const expander = document.querySelector('ytd-text-inline-expander#description-inline-expander');
-            if (expander) {
-                const expandBtn = expander.querySelector('tp-yt-paper-button#expand, button[aria-label*="Show more"], button[aria-label*="More"]');
-                const isExpanded = expander.getAttribute('is-expanded') === '' || expander.hasAttribute('is-expanded');
-                if (expandBtn && !isExpanded) {
-                    expandBtn.click();
-                    await sleep(300);
-                }
-                return;
-            }
-            const fallbackBtn = document.querySelector('#description tp-yt-paper-button#expand, #description button[aria-label*="Show more"]');
-            if (fallbackBtn) {
-                fallbackBtn.click();
-                await sleep(300);
-            }
-        };
-
-        const getDescription = async () => {
-            await expandDescription();
+        const getDescription = () => {
             const selectors = [
                 'ytd-text-inline-expander#description-inline-expander yt-attributed-string',
                 'ytd-text-inline-expander#description-inline-expander yt-formatted-string',
@@ -190,79 +247,26 @@ Based on the information that follows, generate the summary.
         };
 
         (async () => {
-            let videoTitle = 'N/A';
-            let channelName = 'N/A';
-            let videoUrl = window.location.href;
-            let videoDuration = 'N/A';
-            let info = 'N/A';
-            let descriptionText = 'N/A';
-            let descriptionLinks = [];
-            let transcriptText = '';
-
             try {
-                const titleElement = document.querySelector('#title');
-                videoTitle = titleElement ? titleElement.textContent.trim() : 'N/A';
+                const titleElement = document.querySelector('#title h1, #title');
+                const videoTitle = titleElement ? titleElement.textContent.trim() : document.title.replace(/ - YouTube$/, '');
 
-                const channelElement = document.querySelector('#channel-name #text');
-                channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
+                const channelElement = document.querySelector('#channel-name #text, ytd-channel-name #text');
+                const channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
 
-                videoDuration = getVideoDuration();
-                info = getVideoInfo();
+                const videoDuration = getVideoDurationFormatted();
+                const info = getVideoInfo();
+                const videoUrl = window.location.href;
 
-                const descResult = await getDescription();
-                descriptionText = descResult.text;
-                descriptionLinks = descResult.links;
+                const descResult = getDescription();
+                const descriptionText = descResult.text;
+                const descriptionLinks = descResult.links;
 
-                try {
-                    const menuButton = await waitForElement('button[aria-label="More actions"]', 2000);
-                    if (!menuButton) throw new Error('Menu button not found');
+                // 1. Attempt clean direct transcript extraction from player captions (fast, silent, no DOM mutations)
+                let transcriptText = await this.getTranscriptDirectly();
 
-                    menuButton.click();
-                    await sleep(500);
-
-                    if (!await clickButtonWithText('Show transcript')) {
-                        if (!await clickButtonWithText('Open transcript')) {
-                            throw new Error('Transcript button not found');
-                        }
-                    }
-
-                    const segmentSelector = 'ytd-transcript-segment-renderer, transcript-segment-view-model';
-                    const hasSegments = await waitForElement(segmentSelector);
-                    if (!hasSegments) throw new Error('Transcript panel/segments not found');
-
-                    await sleep(1000);
-                    const segments = document.querySelectorAll(segmentSelector);
-
-                    let currentParagraph = '';
-                    let currentTimestamp = '';
-
-                    segments.forEach((segment) => {
-                        const timestampElement = segment.querySelector('.segment-timestamp, .timestamp, #timestamp, .ytwTranscriptSegmentViewModelTimestamp');
-                        const textElement = segment.querySelector('.segment-text, .segment-content, div[class*="segment-text"], .yt-core-attributed-string');
-
-                        if (timestampElement && textElement) {
-                            const timestamp = timestampElement.textContent.trim();
-                            const text = textElement.textContent.trim().replace(/\s+/g, ' ');
-                            if (currentParagraph === '') {
-                                currentTimestamp = timestamp;
-                            }
-                            currentParagraph += text + ' ';
-                            if (currentParagraph.length > 250) {
-                                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                                currentParagraph = '';
-                            }
-                        } else {
-                            transcriptText += segment.textContent;
-                        }
-                    });
-                    if (currentParagraph) {
-                        transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                    }
-
-                    if (!transcriptText) throw new Error('Transcript text empty');
-
-                } catch (transcriptError) {
-                    console.warn('Transcript extraction failed, falling back to URL:', transcriptError);
+                // 2. Fallback if captions are not returned
+                if (!transcriptText) {
                     transcriptText = `Transcript could not be extracted directly. Please use the video URL to analyze the content: ${videoUrl}`;
                 }
 
@@ -313,7 +317,7 @@ ${transcriptText}
                 });
 
             } catch (error) {
-                console.error('Critical failure in extraction:', error);
+                console.error('Failure in YouTube extraction:', error);
                 chrome.runtime.sendMessage({
                     type: 'extractionError',
                     error: 'Failed to extract video data',
@@ -323,3 +327,41 @@ ${transcriptText}
         })();
     }
 };
+
+// Self-contained YouTube auto-run listener (no global variables, no storage)
+(function () {
+    if (window.top !== window.self) return;
+
+    let activeVideoId = null;
+
+    function handleNavigation() {
+        const url = new URL(window.location.href);
+        if (url.pathname !== '/watch') {
+            activeVideoId = null;
+            return;
+        }
+
+        const videoId = url.searchParams.get('v');
+        if (!videoId || videoId === activeVideoId) {
+            return;
+        }
+        activeVideoId = videoId;
+
+        // Give the player 1.5 seconds to load duration data
+        setTimeout(() => {
+            if (new URL(window.location.href).searchParams.get('v') !== videoId) return;
+
+            const duration = window.youtubeExtractor?.getDurationInSeconds?.() || 0;
+            // Auto-run if duration is greater than 10 minutes (600 seconds)
+            if (duration >= 600) {
+                window.youtubeExtractor.extract();
+            }
+        }, 1500);
+    }
+
+    window.addEventListener('yt-navigate-finish', handleNavigation);
+
+    if (window.location.pathname === '/watch') {
+        handleNavigation();
+    }
+})();

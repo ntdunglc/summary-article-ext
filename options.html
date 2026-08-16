@@ -7,16 +7,31 @@
     <link rel="stylesheet" href="options.css" />
   </head>
   <body>
-    <h2>Choose AI Provider</h2>
-    <label for="providerSelect">Select a provider:</label>
-    <select id="providerSelect">
-      <option value="claude">Claude</option>
-      <option value="deepseek">DeepSeek</option>
-      <option value="chatgpt">ChatGPT</option>
-      <option value="gemini">Gemini</option>
-      <option value="aistudio">AI Studio</option>
-    </select>
-    <button id="resetBtn">Reset to Default</button>
+    <h2>AI Provider</h2>
+    <div class="setting-group">
+      <label for="providerSelect">Select a provider:</label>
+      <select id="providerSelect">
+        <option value="claude">Claude</option>
+        <option value="deepseek">DeepSeek</option>
+        <option value="chatgpt">ChatGPT</option>
+        <option value="gemini">Gemini</option>
+        <option value="aistudio">AI Studio</option>
+      </select>
+    </div>
+
+    <h2>YouTube Automation</h2>
+    <div class="setting-group">
+      <label class="checkbox-label">
+        <input type="checkbox" id="autoRunYouTube" />
+        Auto-run summary on long YouTube videos
+      </label>
+      <div id="durationSetting" class="nested-setting">
+        <label for="youtubeMinDuration">Minimum video length (minutes):</label>
+        <input type="number" id="youtubeMinDuration" min="1" max="180" value="10" />
+      </div>
+    </div>
+
+    <button id="resetBtn">Reset to Defaults</button>
     <p id="status"></p>
 
     <script src="options.js"></script>

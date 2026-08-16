@@ -1,32 +1,70 @@
 document.addEventListener("DOMContentLoaded", function () {
   const providerSelect = document.getElementById("providerSelect");
+  const autoRunYouTube = document.getElementById("autoRunYouTube");
+  const youtubeMinDuration = document.getElementById("youtubeMinDuration");
+  const durationSetting = document.getElementById("durationSetting");
   const resetBtn = document.getElementById("resetBtn");
   const status = document.getElementById("status");
 
-  const defaultProvider = "claude"; // Default provider
+  const DEFAULTS = {
+    service: "claude",
+    autoRunYouTube: true,
+    youtubeMinDuration: 10
+  };
 
-  // Load stored provider preference
-  chrome.storage.sync.get("service", (data) => {
-    providerSelect.value = data.service || defaultProvider;
+  function showStatus(message, color = "green") {
+    status.textContent = message;
+    status.style.color = color;
+    setTimeout(() => {
+      status.textContent = "";
+    }, 2000);
+  }
+
+  function updateDurationVisibility() {
+    durationSetting.style.display = autoRunYouTube.checked ? "block" : "none";
+  }
+
+  // Load stored preferences
+  chrome.storage.sync.get(DEFAULTS, (data) => {
+    providerSelect.value = data.service || DEFAULTS.service;
+    autoRunYouTube.checked = data.autoRunYouTube !== undefined ? data.autoRunYouTube : DEFAULTS.autoRunYouTube;
+    youtubeMinDuration.value = data.youtubeMinDuration || DEFAULTS.youtubeMinDuration;
+    updateDurationVisibility();
   });
 
-  // Auto-save provider selection when changed
+  // Auto-save provider selection
   providerSelect.addEventListener("change", function () {
     const selectedProvider = providerSelect.value;
     chrome.storage.sync.set({ service: selectedProvider }, () => {
-      status.textContent = `Saved: ${selectedProvider}`;
-      status.style.color = "green";
-      setTimeout(() => (status.textContent = ""), 2000);
+      showStatus(`Saved: ${selectedProvider}`);
     });
   });
 
-  // Reset to default provider
+  // Auto-save YouTube auto-run toggle
+  autoRunYouTube.addEventListener("change", function () {
+    updateDurationVisibility();
+    chrome.storage.sync.set({ autoRunYouTube: autoRunYouTube.checked }, () => {
+      showStatus(`YouTube Auto-Run: ${autoRunYouTube.checked ? "Enabled" : "Disabled"}`);
+    });
+  });
+
+  // Auto-save YouTube min duration
+  youtubeMinDuration.addEventListener("change", function () {
+    const duration = parseInt(youtubeMinDuration.value, 10) || 10;
+    chrome.storage.sync.set({ youtubeMinDuration: duration }, () => {
+      showStatus(`Min Duration: ${duration} minutes`);
+    });
+  });
+
+  // Reset to default preferences
   resetBtn.addEventListener("click", function () {
-    providerSelect.value = defaultProvider;
-    chrome.storage.sync.set({ service: defaultProvider }, () => {
-      status.textContent = "Reset to default (Claude AI)";
-      status.style.color = "red";
-      setTimeout(() => (status.textContent = ""), 2000);
+    providerSelect.value = DEFAULTS.service;
+    autoRunYouTube.checked = DEFAULTS.autoRunYouTube;
+    youtubeMinDuration.value = DEFAULTS.youtubeMinDuration;
+    updateDurationVisibility();
+
+    chrome.storage.sync.set(DEFAULTS, () => {
+      showStatus("Reset to default settings", "red");
     });
   });
 });
