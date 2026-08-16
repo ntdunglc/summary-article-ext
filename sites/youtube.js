@@ -146,7 +146,7 @@ Based on the information that follows, generate the summary.
         const clickButtonWithText = (text) => {
             const elements = Array.from(document.querySelectorAll('tp-yt-paper-item, button, span, yt-formatted-string, ytd-button-renderer, ytd-menu-service-item-renderer, yt-chip-cloud-chip-renderer'));
             const button = elements.find(el =>
-                el.textContent?.trim().toLowerCase() === text.toLowerCase()
+                el.textContent?.trim().toLowerCase() === text.toLowerCase() && el.offsetParent !== null
             );
             if (button) {
                 (button.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer, tp-yt-paper-item') || button).click();
@@ -155,7 +155,7 @@ Based on the information that follows, generate the summary.
             return false;
         };
 
-        const waitForElement = async (selector, timeout = 4000) => {
+        const waitForElement = async (selector, timeout = 5000) => {
             const start = Date.now();
             while (Date.now() - start < timeout) {
                 const element = document.querySelector(selector);
@@ -177,8 +177,11 @@ Based on the information that follows, generate the summary.
             for (let i = 0; i < lines.length; i++) {
                 const line = lines[i];
 
-                // Skip navigation/header markers
-                if (/^(In this video|Chapters|Transcript|Search transcript|Search in video|English|Auto-generated)$/i.test(line)) {
+                // Skip navigation/header markers and duration tokens
+                if (/^(In this video|Chapters|Transcript|Search transcript|Search in video|English|Auto-generated|\d+\s+seconds?)$/i.test(line)) {
+                    continue;
+                }
+                if (line.startsWith('Chapter ')) {
                     continue;
                 }
 
@@ -186,8 +189,12 @@ Based on the information that follows, generate the summary.
                 const timeOnly = line.match(/^(\d+:\d+(?::\d+)?)$/);
                 if (timeOnly) {
                     const ts = timeOnly[1];
-                    const nextLine = lines[i + 1] || '';
-                    if (nextLine && !/^(\d+:\d+(?::\d+)?)$/.test(nextLine)) {
+                    let nextIdx = i + 1;
+                    while (nextIdx < lines.length && /^(\d+\s+seconds?)$/i.test(lines[nextIdx])) {
+                        nextIdx++;
+                    }
+                    const nextLine = lines[nextIdx] || '';
+                    if (nextLine && !/^(\d+:\d+(?::\d+)?)$/.test(nextLine) && !nextLine.startsWith('Chapter ')) {
                         if (currentParagraph && currentParagraph.length > 200) {
                             transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
                             currentParagraph = '';
@@ -196,7 +203,7 @@ Based on the information that follows, generate the summary.
                         if (!currentTimestamp) currentTimestamp = ts;
                         currentParagraph += (currentParagraph ? ' ' : '') + nextLine;
                         foundCount++;
-                        i++; // skip nextLine
+                        i = nextIdx;
                     }
                     continue;
                 }
@@ -206,7 +213,7 @@ Based on the information that follows, generate the summary.
                 if (timeWithText) {
                     const ts = timeWithText[1];
                     const content = timeWithText[2].trim();
-                    if (content) {
+                    if (content && !/^\d+\s+seconds?$/i.test(content)) {
                         if (currentParagraph && currentParagraph.length > 200) {
                             transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
                             currentParagraph = '';
@@ -220,7 +227,7 @@ Based on the information that follows, generate the summary.
                 }
 
                 // Format 3: Continuation speech text
-                if (foundCount > 0 && currentParagraph) {
+                if (foundCount > 0 && currentParagraph && !/^\d+\s+seconds?$/i.test(line)) {
                     currentParagraph += ' ' + line;
                 }
             }
@@ -235,13 +242,14 @@ Based on the information that follows, generate the summary.
         const tryExtractFromActivePanels = () => {
             // Find all potential transcript panel containers in modern and legacy YouTube layouts
             const panels = Array.from(document.querySelectorAll(
+                'ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"], ' +
                 '[target-id="PAmodern_transcript_view"], ' +
                 '[target-id="engagement-panel-searchable-transcript"], ' +
                 '[target-id*="transcript" i], ' +
                 'ytd-transcript-renderer, ' +
                 'ytd-transcript-search-panel-renderer, ' +
                 'ytd-transcript-segment-list-renderer, ' +
-                '#panels ytd-engagement-panel-section-list-renderer:not([visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"])'
+                'ytd-engagement-panel-section-list-renderer:not([visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"])'
             ));
 
             for (const panel of panels) {
@@ -260,21 +268,20 @@ Based on the information that follows, generate the summary.
 
             // 2. Expand description if collapsed
             const expandBtn = await waitForElement(
-                'ytd-text-inline-expander#description-inline-expander, ' +
+                'ytd-text-inline-expander#description-inline-expander #expand, ' +
                 '#description #expand, ' +
                 'tp-yt-paper-button#expand, ' +
-                'ytd-text-inline-expander, ' +
-                '#description',
-                3500
+                'ytd-text-inline-expander#description-inline-expander',
+                4000
             );
             if (expandBtn) {
                 expandBtn.click();
-                await new Promise(r => setTimeout(r, 300));
+                await new Promise(r => setTimeout(r, 400));
             }
 
             // 3. Click "Show transcript" button in description
             let clicked = false;
-            const descSection = await waitForElement('ytd-video-description-transcript-section-renderer', 2000);
+            const descSection = await waitForElement('ytd-video-description-transcript-section-renderer', 2500);
             if (descSection) {
                 const btn = descSection.querySelector('button, [role="button"]') || descSection;
                 btn.click();
@@ -287,34 +294,33 @@ Based on the information that follows, generate the summary.
 
             // 4. Fallback: Click 3-dots "More actions" menu -> Show transcript
             if (!clicked) {
-                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"]', 2000);
+                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"], ytd-menu-renderer yt-icon-button#button', 2500);
                 if (menuButton) {
                     menuButton.click();
-                    await new Promise(r => setTimeout(r, 300));
+                    await new Promise(r => setTimeout(r, 400));
                     clicked = clickButtonWithText('Show transcript') || clickButtonWithText('Open transcript') || clickButtonWithText('Transcript');
                 }
             }
 
             // 5. If "In this video" panel opened on the Chapters tab, click the "Transcript" tab chip
-            const findAndClickTranscriptTab = () => {
-                const transcriptChip = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div')).find(el => {
-                    return el.textContent?.trim() === 'Transcript' && el.children.length === 0;
-                });
-                if (transcriptChip) {
-                    (transcriptChip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || transcriptChip).click();
+            const clickVisibleTranscriptTab = () => {
+                const transcriptChips = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div'))
+                    .filter(el => el.textContent && el.textContent.trim() === 'Transcript' && el.children.length === 0 && el.offsetParent !== null);
+                for (const chip of transcriptChips) {
+                    (chip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || chip).click();
                     return true;
                 }
                 return false;
             };
 
-            await new Promise(r => setTimeout(r, 400));
-            findAndClickTranscriptTab();
+            await new Promise(r => setTimeout(r, 500));
+            clickVisibleTranscriptTab();
 
-            // 6. Poll for rendered transcript lines in the panel (up to 6 seconds)
-            for (let i = 0; i < 30; i++) {
+            // 6. Poll for rendered transcript lines in the panel (up to 8 seconds)
+            for (let i = 0; i < 35; i++) {
                 await new Promise(r => setTimeout(r, 200));
-                if (i === 3 || i === 8) {
-                    findAndClickTranscriptTab();
+                if (i === 2 || i === 6 || i === 12) {
+                    clickVisibleTranscriptTab();
                 }
                 const res = tryExtractFromActivePanels();
                 if (res) return res;
