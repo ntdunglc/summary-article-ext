@@ -218,6 +218,17 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   const senderTabId = sender?.tab?.id;
 
+  if (message.type === 'summarizeYouTubeFromHome') {
+    chrome.tabs.create({
+      url: message.videoUrl,
+      active: false
+    }, (newTab) => {
+      const storageKey = `pendingAction_${newTab.id}`;
+      chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
+    });
+    return;
+  }
+
   if (message.type === 'extractedText') {
     let mode = 'open_tab';
     if (senderTabId) {
@@ -247,6 +258,21 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         } catch (err) {
           console.error("Failed to copy prompt to clipboard:", err);
         }
+      }
+      return;
+    }
+
+    if (mode === 'summarize_and_replace') {
+      // Navigate the temporary YouTube tab to the AI provider tab directly in the same tab
+      if (senderTabId) {
+        chrome.storage.sync.get({ service: 'claude' }, (result) => {
+          const service = (result.service || 'claude').toLowerCase();
+          const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+          const storageKey = `extractedText_${senderTabId}`;
+          chrome.storage.session.set({ [storageKey]: message.text }, () => {
+            chrome.tabs.update(senderTabId, { url: url });
+          });
+        });
       }
       return;
     }
@@ -282,6 +308,25 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete') {
+    // If this tab is a temporary YouTube watch tab triggered from Home page
+    const actionKey = `pendingAction_${tabId}`;
+    const actionResult = await chrome.storage.session.get(actionKey);
+    if (actionResult && actionResult[actionKey] === 'summarize_and_replace' && tab.url && tab.url.includes('youtube.com/watch')) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          func: () => {
+            if (window.youtubeExtractor?.extract) {
+              window.youtubeExtractor.extract();
+            }
+          }
+        });
+      } catch (err) {
+        console.error("Failed to execute extraction on temporary watch tab:", err);
+      }
+      return;
+    }
+
     const storageKey = `extractedText_${tabId}`;
     const storageResult = await chrome.storage.session.get(storageKey);
     const textPayload = storageResult[storageKey];

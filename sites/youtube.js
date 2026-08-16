@@ -365,3 +365,133 @@ ${transcriptText}
         handleNavigation();
     }
 })();
+
+// Self-contained button injector for video cards across YouTube (Home, Feeds, Search)
+(function () {
+    if (window.top !== window.self) return;
+
+    function ensureStyles() {
+        if (document.getElementById('__yt_ai_summarize_styles__')) return;
+        const style = document.createElement('style');
+        style.id = '__yt_ai_summarize_styles__';
+        style.textContent = `
+            .yt-ai-summarize-btn {
+                position: absolute;
+                top: 8px;
+                right: 8px;
+                z-index: 25;
+                display: inline-flex;
+                align-items: center;
+                gap: 5px;
+                padding: 5px 9px;
+                background: rgba(15, 23, 42, 0.88);
+                color: #ffffff;
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 6px;
+                font-family: Roboto, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                font-size: 12px;
+                font-weight: 500;
+                line-height: 1;
+                cursor: pointer;
+                backdrop-filter: blur(8px);
+                -webkit-backdrop-filter: blur(8px);
+                transition: all 0.2s ease;
+                opacity: 0.85;
+                user-select: none;
+                pointer-events: auto;
+            }
+            .yt-ai-summarize-btn:hover {
+                opacity: 1;
+                background: rgba(15, 23, 42, 0.98);
+                border-color: rgba(56, 189, 248, 0.6);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+                transform: scale(1.04);
+            }
+            .yt-ai-summarize-btn svg {
+                stroke: #38bdf8;
+            }
+            .yt-ai-summarize-btn.is-loading {
+                opacity: 1;
+                background: rgba(2, 132, 199, 0.9);
+                border-color: #38bdf8;
+                cursor: wait;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    function injectCardButtons() {
+        ensureStyles();
+
+        const containers = document.querySelectorAll(
+            'ytd-thumbnail:not([data-ai-btn]), ' +
+            'ytd-rich-grid-media #thumbnail:not([data-ai-btn]), ' +
+            'ytd-video-renderer #thumbnail:not([data-ai-btn]), ' +
+            'ytd-grid-video-renderer #thumbnail:not([data-ai-btn]), ' +
+            '.yt-lockup-view-model-wiz__content-image:not([data-ai-btn]), ' +
+            'a#thumbnail:not([data-ai-btn])'
+        );
+
+        containers.forEach((thumb) => {
+            if (thumb.dataset.aiBtn) return;
+            thumb.dataset.aiBtn = 'true';
+
+            const link = thumb.closest('a[href*="/watch"]') ||
+                thumb.querySelector('a[href*="/watch"]') ||
+                thumb.closest('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, yt-lockup-view-model')?.querySelector('a[href*="/watch"]');
+
+            if (!link || !link.href) return;
+
+            try {
+                const url = new URL(link.href, window.location.origin);
+                const videoId = url.searchParams.get('v');
+                if (!videoId) return;
+
+                const btn = document.createElement('button');
+                btn.className = 'yt-ai-summarize-btn';
+                btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+                btn.title = 'Summarize with AI';
+
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+
+                    btn.classList.add('is-loading');
+                    btn.innerHTML = `<span>⏳ Summarizing...</span>`;
+
+                    const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                    if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                        chrome.runtime.sendMessage({
+                            type: 'summarizeYouTubeFromHome',
+                            videoUrl: targetUrl,
+                            videoId: videoId
+                        });
+                    } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
+                        browser.runtime.sendMessage({
+                            type: 'summarizeYouTubeFromHome',
+                            videoUrl: targetUrl,
+                            videoId: videoId
+                        });
+                    }
+
+                    setTimeout(() => {
+                        btn.classList.remove('is-loading');
+                        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Summarize</span>`;
+                    }, 3000);
+                });
+
+                const computedPos = window.getComputedStyle(thumb).position;
+                if (computedPos === 'static') {
+                    thumb.style.position = 'relative';
+                }
+                thumb.appendChild(btn);
+            } catch (err) {
+                // Ignore parse errors
+            }
+        });
+    }
+
+    injectCardButtons();
+    setInterval(injectCardButtons, 1500);
+    window.addEventListener('yt-navigate-finish', () => setTimeout(injectCardButtons, 500));
+})();
