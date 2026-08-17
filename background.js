@@ -32,11 +32,16 @@ chrome.runtime.onInstalled.addListener(() => {
       title: 'Copy Prompt',
       contexts: ['action']
     });
+    chrome.contextMenus.create({
+      id: 'copy_content',
+      title: 'Copy Content',
+      contexts: ['action']
+    });
   });
 });
 
-// Helper executed in tab context to copy prompt & display toast
-function copyPromptToClipboardWithToast(text) {
+// Helper executed in tab context to copy text & display toast
+function copyToClipboardWithToast(text, label = 'Prompt') {
   function showToast(success, message) {
     const TOAST_ID = '__ai_summarizer_toast__';
     const existing = document.getElementById(TOAST_ID);
@@ -95,7 +100,7 @@ function copyPromptToClipboardWithToast(text) {
 
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(() => {
-      showToast(true, 'Prompt copied to clipboard!');
+      showToast(true, `${label} copied to clipboard!`);
     }).catch(() => {
       fallbackCopy();
     });
@@ -117,12 +122,12 @@ function copyPromptToClipboardWithToast(text) {
       const ok = document.execCommand('copy');
       document.body.removeChild(textarea);
       if (ok) {
-        showToast(true, 'Prompt copied to clipboard!');
+        showToast(true, `${label} copied to clipboard!`);
       } else {
-        showToast(false, 'Failed to copy prompt to clipboard');
+        showToast(false, `Failed to copy ${label.toLowerCase()} to clipboard`);
       }
     } catch (e) {
-      showToast(false, 'Failed to copy prompt to clipboard');
+      showToast(false, `Failed to copy ${label.toLowerCase()} to clipboard`);
     }
   }
 }
@@ -200,13 +205,15 @@ chrome.action.onClicked.addListener(async (tab) => {
   await runExtraction(tab, 'open_tab');
 });
 
-// Right-click context menu on extension icon: copy prompt to clipboard
+// Right-click context menu on extension icon: copy prompt or content
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const targetTab = tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+  if (!targetTab) return;
+
   if (info.menuItemId === 'copy_prompt') {
-    const targetTab = tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
-    if (targetTab) {
-      await runExtraction(targetTab, 'copy_prompt');
-    }
+    await runExtraction(targetTab, 'copy_prompt');
+  } else if (info.menuItemId === 'copy_content') {
+    await runExtraction(targetTab, 'copy_content');
   }
 });
 
@@ -261,8 +268,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         try {
           await chrome.scripting.executeScript({
             target: { tabId: senderTabId },
-            func: copyPromptToClipboardWithToast,
-            args: [message.text]
+            func: copyToClipboardWithToast,
+            args: [message.text, 'Prompt']
           });
 
           chrome.action.setBadgeText({ text: '✓', tabId: senderTabId });
@@ -272,6 +279,28 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
           }, 2000);
         } catch (err) {
           console.error("Failed to copy prompt to clipboard:", err);
+        }
+      }
+      return;
+    }
+
+    if (mode === 'copy_content') {
+      if (senderTabId) {
+        const textToCopy = message.contentOnly || message.text;
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: senderTabId },
+            func: copyToClipboardWithToast,
+            args: [textToCopy, 'Content']
+          });
+
+          chrome.action.setBadgeText({ text: '✓', tabId: senderTabId });
+          chrome.action.setBadgeBackgroundColor({ color: '#10b981', tabId: senderTabId });
+          setTimeout(() => {
+            chrome.action.setBadgeText({ text: '', tabId: senderTabId });
+          }, 2000);
+        } catch (err) {
+          console.error("Failed to copy content to clipboard:", err);
         }
       }
       return;

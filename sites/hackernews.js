@@ -124,12 +124,14 @@ Analyze the following data to generate your response.
 
         // --- 3. Assemble the Final Output ---
         const fullText = `${this.getPrompt()}\n\n${providedData}`;
+        const contentOnly = providedData.trim();
 
         // Send message if in extension context
         if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
             chrome.runtime.sendMessage({
                 type: 'extractedText',
                 text: fullText,
+                contentOnly: contentOnly,
                 contentType: 'hn_and_article_url'
             });
         }

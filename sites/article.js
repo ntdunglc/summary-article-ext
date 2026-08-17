@@ -115,9 +115,17 @@ Here is the article to summarize:
 ${article.textContent}
 </article>`;
 
+                const contentOnlyText = `${metadataText}
+
+Here is the article:
+<article>
+${article.textContent}
+</article>`.trim();
+
                 chrome.runtime.sendMessage({
                     type: 'extractedText',
                     text: fullText,
+                    contentOnly: contentOnlyText,
                     contentType: 'article',
                     articleTitle: article.title,
                     articleAuthor: article.byline,

@@ -158,6 +158,7 @@ Here is the product information:`;
             chrome.runtime.sendMessage({
                 type: 'extractedText',
                 text: fullText,
+                contentOnly: formattedInfo.trim(),
                 contentType: 'amazon'
             });
 

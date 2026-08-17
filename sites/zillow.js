@@ -87,19 +87,14 @@ window.zillowExtractor = {
                     url: document.location.href
                 };
 
-                const contextInfo = `
-  Title: ${metadata.title}
-  Source: ${metadata.siteName}
-  Author: ${metadata.byline}
-  Published: ${metadata.publishedTime}
-  URL: ${metadata.url}
-  `;
-
-                const fullText = this.getPrompt() + '\n\n' + contextInfo + article.textContent;
+                const contextInfo = `Title: ${metadata.title}\nSource: ${metadata.siteName}\nAuthor: ${metadata.byline}\nPublished: ${metadata.publishedTime}\nURL: ${metadata.url}\n`;
+                const contentOnly = `${contextInfo}\n${article.textContent}`.trim();
+                const fullText = `${this.getPrompt()}\n\n${contentOnly}`;
 
                 chrome.runtime.sendMessage({
                     type: 'extractedText',
                     text: fullText,
+                    contentOnly: contentOnly,
                     contentType: 'article'
                 });
             }

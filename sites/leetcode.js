@@ -88,11 +88,13 @@ Code skeleton:
                 .join('\n');
 
             // Add code skeleton at the end
-            const fullText = this.getPrompt() + '\n\n' + formattedInfo + '\n### Code Skeleton\n```python\n' + codeSkeleton + '\n```';
+            const contentOnly = (formattedInfo + '\n\n### Code Skeleton\n```python\n' + codeSkeleton + '\n```').trim();
+            const fullText = this.getPrompt() + '\n\n' + contentOnly;
 
             chrome.runtime.sendMessage({
                 type: 'extractedText',
                 text: fullText,
+                contentOnly: contentOnly,
                 contentType: 'leetcode'
             });
 

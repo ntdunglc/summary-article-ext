@@ -445,9 +445,23 @@ Here is the transcript:
 ${transcriptText}
 </transcript>`;
 
+                let contentOnlyText = `${metadataText}
+${footnotesText}
+
+Here is the description:
+<description>
+${descriptionText}
+</description>
+
+Here is the transcript:
+<transcript>
+${transcriptText}
+</transcript>`.trim();
+
                 chrome.runtime.sendMessage({
                     type: 'extractedText',
                     text: fullText,
+                    contentOnly: contentOnlyText,
                     contentType: 'youtube',
                     videoTitle: videoTitle,
                     videoChannel: channelName,
@@ -455,7 +469,8 @@ ${transcriptText}
                     videoDuration: videoDuration,
                     info: info,
                     videoDescription: descriptionText,
-                    videoDescriptionLinks: descriptionLinks
+                    videoDescriptionLinks: descriptionLinks,
+                    transcriptText: transcriptText
                 });
 
             } catch (error) {
