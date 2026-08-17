@@ -656,8 +656,17 @@ ${transcriptText}
                 'a#thumbnail'
             ) || card;
 
+            // Resolve hostContainer outside of any anchor or aria-hidden elements to satisfy WAI-ARIA and HTML specs
+            let hostContainer = thumb;
+            while (hostContainer && (hostContainer.tagName === 'A' || hostContainer.getAttribute('aria-hidden') === 'true' || hostContainer.closest('[aria-hidden="true"]'))) {
+                const parent = hostContainer.parentElement;
+                if (!parent || hostContainer === card) break;
+                hostContainer = parent;
+            }
+            if (!hostContainer) hostContainer = card;
+
             // Prevent injecting multiple buttons if child/parent already processed
-            if (thumb.querySelector('.yt-ai-summarize-badge') || card.querySelector('.yt-ai-summarize-badge')) {
+            if (hostContainer.querySelector('.yt-ai-summarize-badge') || card.querySelector('.yt-ai-summarize-badge')) {
                 card.dataset.aiBtn = 'true';
                 return;
             }
@@ -699,11 +708,11 @@ ${transcriptText}
                 }, 6000);
             });
 
-            const computedPos = window.getComputedStyle(thumb).position;
+            const computedPos = window.getComputedStyle(hostContainer).position;
             if (computedPos === 'static') {
-                thumb.style.position = 'relative';
+                hostContainer.style.position = 'relative';
             }
-            thumb.appendChild(btn);
+            hostContainer.appendChild(btn);
         });
     }
 
