@@ -274,28 +274,6 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       const storageKey = `pendingAction_${newTab.id}`;
       chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
       console.log(`%c[Service Worker] Opened Watch Tab ${newTab.id}, set pendingAction = summarize_and_replace`, 'color: #8b5cf6;');
-
-      // Fallback watchdog: If tab doesn't extract within 12s, re-trigger extraction
-      setTimeout(async () => {
-        const check = await chrome.storage.session.get(storageKey);
-        if (check && (check[storageKey] === 'summarize_and_replace' || check[storageKey] === 'summarize_and_replace_running')) {
-          console.warn(`%c[Service Worker] Fallback watchdog re-triggering extraction for tab ${newTab.id}`, 'color: #f59e0b;');
-          try {
-            await chrome.scripting.executeScript({
-              target: { tabId: newTab.id },
-              files: ['sites/youtube.js']
-            });
-            await chrome.scripting.executeScript({
-              target: { tabId: newTab.id },
-              func: () => {
-                if (window.youtubeExtractor?.extract) {
-                  window.youtubeExtractor.extract();
-                }
-              }
-            });
-          } catch (_) {}
-        }
-      }, 12000);
     });
     return;
   }

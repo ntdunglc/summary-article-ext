@@ -544,7 +544,8 @@ Based on the information that follows, generate the summary.
     },
 
     extract() {
-        if (this._isExtracting) return;
+        if (window._youtubeExtractionActive || this._isExtracting) return;
+        window._youtubeExtractionActive = true;
         this._isExtracting = true;
 
         const waitForElement = async (selector, timeout = 7000) => {
@@ -555,6 +556,45 @@ Based on the information that follows, generate the summary.
                 await new Promise(resolve => setTimeout(resolve, 100));
             }
             return null;
+        };
+
+        const getTitle = () => {
+            const selectors = [
+                'ytd-watch-metadata #title h1',
+                '#title h1',
+                'h1.ytd-watch-metadata',
+                'h1.title.ytd-video-primary-info-renderer',
+                '#title',
+                'ytd-watch-metadata #title'
+            ];
+            for (const s of selectors) {
+                const el = document.querySelector(s);
+                if (el && el.textContent && el.textContent.trim()) {
+                    return el.textContent.trim();
+                }
+            }
+            if (document.title && !document.title.startsWith('http')) {
+                const clean = document.title.replace(/\s*-\s*YouTube\s*$/i, '').trim();
+                if (clean) return clean;
+            }
+            return 'N/A';
+        };
+
+        const getChannel = () => {
+            const selectors = [
+                '#owner #channel-name #text',
+                '#channel-name #text',
+                'ytd-channel-name #text',
+                'ytd-video-owner-renderer #channel-name a',
+                '#upload-info #channel-name'
+            ];
+            for (const s of selectors) {
+                const el = document.querySelector(s);
+                if (el && el.textContent && el.textContent.trim()) {
+                    return el.textContent.trim();
+                }
+            }
+            return 'N/A';
         };
 
         const getVideoInfo = () => {
@@ -591,14 +631,11 @@ Based on the information that follows, generate the summary.
         (async () => {
             try {
                 // Ensure page metadata and description components are fully mounted before extracting
-                await waitForElement('#description-inline-expander, ytd-watch-metadata, #description, #title h1, #title', 10000);
+                await waitForElement('#title h1, h1.ytd-watch-metadata, #description-inline-expander, ytd-watch-metadata, #description', 10000);
                 await new Promise(r => setTimeout(r, 600));
 
-                const titleElement = document.querySelector('#title h1, #title, ytd-watch-metadata #title');
-                const videoTitle = titleElement ? titleElement.textContent.trim() : document.title.replace(/ - YouTube$/, '');
-
-                const channelElement = document.querySelector('#channel-name #text, ytd-channel-name #text');
-                const channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
+                const videoTitle = getTitle();
+                const channelName = getChannel();
 
                 const durationSeconds = this.getDurationInSeconds();
                 const videoDuration = this.getVideoDurationFormatted(durationSeconds);
@@ -735,6 +772,7 @@ ${transcriptText}
                 });
             } finally {
                 this._isExtracting = false;
+                window._youtubeExtractionActive = false;
             }
         })();
     }
