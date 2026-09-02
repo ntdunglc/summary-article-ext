@@ -1,7 +1,6 @@
 window.chatgptBot = {
     input(text) {
         setTimeout(() => {
-            debugger
             const textarea = document.querySelector('#prompt-textarea');
             if (textarea) {
                 const formattedHtml = text

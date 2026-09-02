@@ -164,52 +164,168 @@ window.geminiBot = {
         console.log('selectExtendedThinking: complete');
     },
 
-    async input(text) {
-        // try {
-        //     await this.selectExtendedThinking();
-        // } catch (e) {
-        //     console.error('Error selecting Extended thinking:', e);
-        // }
+    sendDebugLog(stage, details = {}) {
+        const payload = {
+            type: 'extractionDebugLog',
+            site: 'gemini_bot',
+            stage: stage,
+            url: window.location.href,
+            timestamp: new Date().toISOString(),
+            details: details
+        };
+        try {
+            if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                chrome.runtime.sendMessage(payload).catch(() => {});
+            } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
+                browser.runtime.sendMessage(payload).catch(() => {});
+            }
+        } catch (_) {}
+        console.log(`%c[Gemini Bot] [${stage}]`, 'color: #0284c7; font-weight: bold;', details);
+    },
 
+    async input(text) {
         // 1. Select the editor using the class and role
-        const promptBoxSelector = 'div.ql-editor[contenteditable="true"]'; 
+        const promptBoxSelector = 'div.ql-editor[contenteditable="true"], [contenteditable="true"]'; 
         const promptBox = await this.waitForElement(promptBoxSelector);
 
         if (!promptBox) {
+            this.sendDebugLog('GeminiError', { error: 'Prompt box not found' });
             console.error('Prompt box not found.');
             return;
         }
 
-        // 2. Focus is CRITICAL for execCommand to work
+        this.sendDebugLog('GeminiInputStart', {
+            incomingTextLength: text.length
+        });
+
+        // 2. Focus the editor
+        window.focus();
         promptBox.focus();
+        promptBox.classList.remove('ql-blank');
 
-        // 3. Use execCommand to simulate "pasting" or typing text. 
-        // This automatically handles removing the 'ql-blank' class and creates the <p> tags.
-        const success = document.execCommand('insertText', false, text);
+        // Helper: Copy to system clipboard without requiring window focus
+        const copyTextToClipboard = (str) => {
+            try {
+                const ta = document.createElement('textarea');
+                ta.value = str;
+                ta.style.position = 'fixed';
+                ta.style.top = '0';
+                ta.style.left = '0';
+                ta.style.width = '10px';
+                ta.style.height = '10px';
+                ta.style.opacity = '0.01';
+                document.body.appendChild(ta);
+                ta.focus();
+                ta.select();
+                const copied = document.execCommand('copy');
+                document.body.removeChild(ta);
+                if (copied) return true;
+            } catch (_) {}
+            return false;
+        };
 
-        // Fallback: If execCommand fails (rare, but possible in some contexts), do it manually
-        if (!success) {
-            console.log('execCommand failed, using fallback DOM manipulation...');
-            promptBox.textContent = text;
-            promptBox.classList.remove('ql-blank'); // Force remove placeholder class
+        // 3. Strategy 1: Copy to system clipboard and trigger trusted native browser paste
+        // With clipboardRead/Write extension permissions, document.execCommand('paste') triggers the exact same native C++ paste path as Cmd+V
+        let pasteSucceeded = false;
+        let origClipboard = null;
+        try {
+            // Backup user's original clipboard content if readable
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                origClipboard = await navigator.clipboard.readText().catch(() => null);
+            }
+
+            let copied = copyTextToClipboard(text);
+            if (!copied && navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text).catch(() => {});
+                copied = true;
+            }
+            this.sendDebugLog('GeminiClipboardCopy', { copied, textLength: text.length });
+
+            promptBox.focus();
+            const ok = document.execCommand('paste');
+            this.sendDebugLog('GeminiSystemClipboardPaste', { execCommandReturned: ok, textLength: text.length });
+
+            // Poll for native paste to land in the DOM/Quill editor
+            for (let attempt = 0; attempt < 15; attempt++) {
+                await new Promise(r => setTimeout(r, 100));
+                const len = (promptBox.textContent || '').length;
+                if (len >= text.length * 0.8) {
+                    pasteSucceeded = true;
+                    this.sendDebugLog('GeminiPastePopulated', { populatedLength: len, attemptsNeeded: attempt + 1 });
+                    break;
+                }
+            }
+
+            // Restore user's previous clipboard content
+            if (origClipboard !== null && origClipboard !== text) {
+                copyTextToClipboard(origClipboard);
+            }
+        } catch (e) {
+            this.sendDebugLog('GeminiClipboardError', { error: e.message });
         }
 
-        // 4. Dispatch Input event to notify Angular that the form is dirty
-        const inputEvent = new Event('input', { bubbles: true, cancelable: true });
-        promptBox.dispatchEvent(inputEvent);
+        // 4. Fallback: Only run if native paste did NOT populate the editor
+        let currentDomLength = (promptBox.textContent || '').length;
+        if (!pasteSucceeded && currentDomLength < text.length * 0.8) {
+            try {
+                const quill = promptBox.__quill || 
+                              promptBox.__quillInstance || 
+                              (typeof window.Quill !== 'undefined' && window.Quill.find ? window.Quill.find(promptBox) : null);
+                if (quill && typeof quill.setText === 'function') {
+                    quill.setText(text);
+                    this.sendDebugLog('GeminiQuillDirectInject', { usingQuillInstance: true });
+                }
+            } catch (e) {
+                console.warn('Quill direct injection failed:', e);
+            }
 
-        // 5. Wait for the Send button to become enabled
-        await new Promise(resolve => setTimeout(resolve, 600)); // Slightly longer wait for Angular
+            currentDomLength = (promptBox.textContent || '').length;
+            if (currentDomLength < text.length * 0.8) {
+                this.sendDebugLog('GeminiHtmlFallback', {
+                    currentDomLength,
+                    incomingLength: text.length
+                });
+                const formattedHtml = text
+                    .split('\n')
+                    .map(line => {
+                        if (line.trim() === '') return '<p><br></p>';
+                        const escaped = line
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;');
+                        return `<p>${escaped}</p>`;
+                    })
+                    .join('');
+                promptBox.innerHTML = formattedHtml;
+                promptBox.classList.remove('ql-blank');
+            }
+        }
+
+        // 7. Dispatch Input and Change events to notify Angular Form Controller
+        promptBox.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertFromPaste', data: text }));
+        promptBox.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        promptBox.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+
+        const finalLength = (promptBox.textContent || '').length;
+        this.sendDebugLog('GeminiFinalVerification', {
+            incomingTextLength: text.length,
+            finalEditorLength: finalLength,
+            retentionRatio: ((finalLength / text.length) * 100).toFixed(1) + '%'
+        });
+
+        // 8. Wait 1200ms for Angular / Quill state to fully synchronize before sending
+        await new Promise(resolve => setTimeout(resolve, 1200));
 
         // Selector for the enabled send button
-        const sendButtonSelector = 'button[aria-label="Send message"]:not([aria-disabled="true"])';
-        const sendButton = await this.waitForElement(sendButtonSelector, 10, 500);
+        const sendButtonSelector = 'button[aria-label="Send message"]:not([aria-disabled="true"]), button.send-button:not([disabled])';
+        const sendButton = await this.waitForElement(sendButtonSelector, 15, 400);
 
         if (sendButton) {
-            console.log('Clicking Send button.');
+            this.sendDebugLog('GeminiSendClicked', { buttonFound: true, finalEditorLength: finalLength });
             sendButton.click();
         } else {
-            console.error('Send button is still disabled. The input event might not have registered.');
+            this.sendDebugLog('GeminiSendFailed', { buttonFound: false });
+            console.error('Send button is still disabled.');
         }
     }
 };

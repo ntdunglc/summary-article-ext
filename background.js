@@ -41,7 +41,7 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 
 // Helper executed in tab context to copy text & display toast
-function copyToClipboardWithToast(text, label = 'Prompt') {
+function copyToClipboardWithToast(text, label = 'Prompt', isWarning = false) {
   function showToast(success, message) {
     const TOAST_ID = '__ai_summarizer_toast__';
     const existing = document.getElementById(TOAST_ID);
@@ -49,6 +49,18 @@ function copyToClipboardWithToast(text, label = 'Prompt') {
 
     const toast = document.createElement('div');
     toast.id = TOAST_ID;
+
+    const bgColor = !success
+      ? 'rgba(127, 29, 29, 0.95)'
+      : isWarning
+        ? 'rgba(45, 30, 10, 0.95)'
+        : 'rgba(24, 24, 27, 0.95)';
+
+    const borderColor = !success
+      ? '1px solid rgba(239, 68, 68, 0.3)'
+      : isWarning
+        ? '1px solid rgba(245, 158, 11, 0.45)'
+        : '1px solid rgba(255, 255, 255, 0.15)';
 
     Object.assign(toast.style, {
       position: 'fixed',
@@ -59,7 +71,7 @@ function copyToClipboardWithToast(text, label = 'Prompt') {
       alignItems: 'center',
       gap: '10px',
       padding: '12px 18px',
-      backgroundColor: success ? 'rgba(24, 24, 27, 0.95)' : 'rgba(127, 29, 29, 0.95)',
+      backgroundColor: bgColor,
       color: '#ffffff',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
       fontSize: '14px',
@@ -67,7 +79,7 @@ function copyToClipboardWithToast(text, label = 'Prompt') {
       lineHeight: '1.4',
       borderRadius: '8px',
       boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
-      border: success ? '1px solid rgba(255, 255, 255, 0.15)' : '1px solid rgba(239, 68, 68, 0.3)',
+      border: borderColor,
       backdropFilter: 'blur(10px)',
       webkitBackdropFilter: 'blur(10px)',
       opacity: '0',
@@ -77,9 +89,11 @@ function copyToClipboardWithToast(text, label = 'Prompt') {
       userSelect: 'none'
     });
 
-    const iconSvg = success
-      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`
-      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+    const iconSvg = !success
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
+      : isWarning
+        ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+        : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
 
     toast.innerHTML = `${iconSvg}<span>${message}</span>`;
     document.body.appendChild(toast);
@@ -220,18 +234,52 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
   const senderTabId = sender?.tab?.id;
 
+  if (message.type === 'extractionDebugLog') {
+    const stageColor = message.stage?.startsWith('Resolved')
+      ? 'color: #10b981; font-weight: bold;'
+      : message.stage?.includes('Error')
+        ? 'color: #ef4444; font-weight: bold;'
+        : 'color: #0284c7; font-weight: bold;';
+
+    console.log(
+      `%c[Service Worker] [${message.stage}] Tab ${senderTabId || '?'}:`,
+      stageColor,
+      message.details || {}
+    );
+    return;
+  }
+
+  if (message.type === 'checkPendingAction') {
+    if (senderTabId) {
+      const actionKey = `pendingAction_${senderTabId}`;
+      const actionResult = await chrome.storage.session.get(actionKey);
+      const action = actionResult ? actionResult[actionKey] : null;
+      if (action === 'summarize_and_replace' || action === 'summarize_and_close' || action === 'summarize_and_replace_running') {
+        console.log(`%c[Service Worker] checkPendingAction -> triggering extraction on tab ${senderTabId} (action: ${action})`, 'color: #8b5cf6;');
+        await chrome.storage.session.set({ [actionKey]: 'summarize_and_replace_running' });
+        sendResponse({ shouldExtract: true, action: action });
+        return true;
+      }
+    }
+    sendResponse({ shouldExtract: false });
+    return true;
+  }
+
   if (message.type === 'summarizeYouTubeFromHome') {
+    console.log(`%c[Service Worker] Summarize from Home received for URL: ${message.videoUrl}`, 'color: #8b5cf6; font-weight: bold;');
     chrome.tabs.create({
       url: message.videoUrl,
       active: true
     }, (newTab) => {
       const storageKey = `pendingAction_${newTab.id}`;
       chrome.storage.session.set({ [storageKey]: 'summarize_and_replace' });
+      console.log(`%c[Service Worker] Opened Watch Tab ${newTab.id}, set pendingAction = summarize_and_replace`, 'color: #8b5cf6;');
 
-      // Fallback watchdog: If tab doesn't extract within 8s, re-trigger extraction or cleanup
+      // Fallback watchdog: If tab doesn't extract within 12s, re-trigger extraction
       setTimeout(async () => {
         const check = await chrome.storage.session.get(storageKey);
-        if (check && check[storageKey] === 'summarize_and_replace') {
+        if (check && (check[storageKey] === 'summarize_and_replace' || check[storageKey] === 'summarize_and_replace_running')) {
+          console.warn(`%c[Service Worker] Fallback watchdog re-triggering extraction for tab ${newTab.id}`, 'color: #f59e0b;');
           try {
             await chrome.scripting.executeScript({
               target: { tabId: newTab.id },
@@ -247,7 +295,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
             });
           } catch (_) {}
         }
-      }, 8000);
+      }, 12000);
     });
     return;
   }
@@ -263,20 +311,33 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       }
     }
 
+    console.group(`%c[Service Worker] Transcript Extraction Received (Tab ${senderTabId || '?'})`, 'color: #10b981; font-weight: bold; font-size: 13px;');
+    console.log('Video Title:', message.videoTitle || 'N/A');
+    console.log('Video URL:', message.videoUrl || sender?.tab?.url || 'N/A');
+    console.log('Video Duration:', message.videoDuration || 'N/A');
+    console.log('Transcript Status:', message.transcriptStatus || 'N/A');
+    console.log('Warning Banner (Truncated?):', message.hasWarning ? '⚠️ YES' : '✓ NO (Complete)');
+    console.log('Transcript Text Length:', message.transcriptText?.length || 0, 'chars');
+    console.log('Total Output Payload Length:', message.text?.length || 0, 'chars');
+    console.log('Target Action Mode:', mode);
+    console.groupEnd();
+
     if (mode === 'copy_prompt') {
       if (senderTabId) {
+        const isWarning = !!message.hasWarning;
+        const label = isWarning ? 'Prompt (⚠️ Notice)' : 'Prompt';
         try {
           await chrome.scripting.executeScript({
             target: { tabId: senderTabId },
             func: copyToClipboardWithToast,
-            args: [message.text, 'Prompt']
+            args: [message.text, label, isWarning]
           });
 
-          chrome.action.setBadgeText({ text: '✓', tabId: senderTabId });
-          chrome.action.setBadgeBackgroundColor({ color: '#10b981', tabId: senderTabId });
+          chrome.action.setBadgeText({ text: isWarning ? '!' : '✓', tabId: senderTabId });
+          chrome.action.setBadgeBackgroundColor({ color: isWarning ? '#f59e0b' : '#10b981', tabId: senderTabId });
           setTimeout(() => {
             chrome.action.setBadgeText({ text: '', tabId: senderTabId });
-          }, 2000);
+          }, 2500);
         } catch (err) {
           console.error("Failed to copy prompt to clipboard:", err);
         }
@@ -287,18 +348,20 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     if (mode === 'copy_content') {
       if (senderTabId) {
         const textToCopy = message.contentOnly || message.text;
+        const isWarning = !!message.hasWarning;
+        const label = isWarning ? 'Content (⚠️ Notice)' : 'Content';
         try {
           await chrome.scripting.executeScript({
             target: { tabId: senderTabId },
             func: copyToClipboardWithToast,
-            args: [textToCopy, 'Content']
+            args: [textToCopy, label, isWarning]
           });
 
-          chrome.action.setBadgeText({ text: '✓', tabId: senderTabId });
-          chrome.action.setBadgeBackgroundColor({ color: '#10b981', tabId: senderTabId });
+          chrome.action.setBadgeText({ text: isWarning ? '!' : '✓', tabId: senderTabId });
+          chrome.action.setBadgeBackgroundColor({ color: isWarning ? '#f59e0b' : '#10b981', tabId: senderTabId });
           setTimeout(() => {
             chrome.action.setBadgeText({ text: '', tabId: senderTabId });
-          }, 2000);
+          }, 2500);
         } catch (err) {
           console.error("Failed to copy content to clipboard:", err);
         }
@@ -311,6 +374,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         chrome.storage.sync.get({ service: 'claude' }, (result) => {
           const service = (result.service || 'claude').toLowerCase();
           const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+          console.log(`%c[Service Worker] Navigating Tab ${senderTabId} to AI provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
           const storageKey = `extractedText_${senderTabId}`;
           chrome.storage.session.set({ [storageKey]: message.text }, () => {
             chrome.tabs.update(senderTabId, { url: url });
@@ -326,6 +390,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
         const service = (result.service || 'claude').toLowerCase();
         const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
         const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
+        console.log(`%c[Service Worker] Opening new AI tab for provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
 
         chrome.tabs.create({
           url: url,
@@ -338,6 +403,7 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       });
     });
   } else if (message.type === 'extractionError') {
+    console.error(`%c[Service Worker] Extraction error on Tab ${senderTabId}:`, message.error, message.details);
     if (senderTabId) {
       const storageKey = `pendingAction_${senderTabId}`;
       const stored = await chrome.storage.session.get(storageKey);
@@ -353,6 +419,8 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     }
   }
 });
+
+let botInjectionQueue = Promise.resolve();
 
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   if (changeInfo.status === 'complete') {
@@ -402,27 +470,32 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
         return;
       }
 
-      try {
-        await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          files: [`bots/${service}.js`]
-        });
+      // Serialize injections across concurrent tabs to prevent system clipboard race conditions
+      botInjectionQueue = botInjectionQueue.then(async () => {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            files: [`bots/${service}.js`]
+          });
 
-        await chrome.scripting.executeScript({
-          target: { tabId: tabId },
-          func: (handlerName, text) => {
-            if (window[handlerName]?.input) {
-              window[handlerName].input(text);
-            }
-          },
-          args: [HANDLERS[service], textPayload]
-        });
+          await chrome.scripting.executeScript({
+            target: { tabId: tabId },
+            func: (handlerName, text) => {
+              if (window[handlerName]?.input) {
+                window[handlerName].input(text);
+              }
+            },
+            args: [HANDLERS[service], textPayload]
+          });
 
-        chrome.storage.session.remove(storageKey);
-
-      } catch (err) {
-        console.error("Failed to inject into AI bot tab:", err);
-      }
+          await chrome.storage.session.remove(storageKey);
+          await new Promise(r => setTimeout(r, 600)); // Buffer to avoid concurrent tab paste races
+        } catch (err) {
+          console.error("Failed to inject into AI bot tab:", err);
+        }
+      }).catch(err => {
+        console.error("Bot injection queue error:", err);
+      });
     }
   }
 });

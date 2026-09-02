@@ -4,6 +4,10 @@ window.youtubeExtractor = {
 
 Your output must strictly follow the markdown template below. Do not add any introductory or concluding remarks outside of this template. Make sure your output has all the sections and no duplicate sections.
 
+**Transcript Instructions:**
+- If an explicit \`> [!WARNING]\` banner is provided in the input below (indicating that the transcript is unavailable or severely truncated), include a \`> [!WARNING]\` alert at the top of your summary explaining this limitation, and synthesize the content using the video title, description, chapters, and external URLs.
+- Otherwise, the transcript is complete; do not add disclaimers or mention transcript coverage or missing end seconds.
+
 ===template===
 ### Video Metadata
 **Title:** [YouTube Video Title]
@@ -99,34 +103,51 @@ Distill actionable advice from the video, tailored for relevant audiences. **Omi
 ### Footnotes
 - List all the external URLs that were read to ground the facts and background of this video, numbered sequentially.
 - Format: [n] [URL]
-==end of template===
+===end of template===
 
 Based on the information that follows, generate the summary.
 `;
     },
 
-    getDurationInSeconds() {
-        const player = document.getElementById('movie_player');
-        if (player && typeof player.getDuration === 'function') {
-            const d = player.getDuration();
-            if (typeof d === 'number' && !isNaN(d) && d > 0) return d;
-        }
-
-        const isAd = document.querySelector('.ad-showing, .ad-interrupting');
-        const video = document.querySelector('video.html5-main-video, video');
-        if (!isAd && video && video.duration && !isNaN(video.duration) && video.duration > 0) {
-            return video.duration;
-        }
-
-        const timeDisplay = document.querySelector('.ytp-time-duration');
-        if (timeDisplay && timeDisplay.textContent) {
-            const parts = timeDisplay.textContent.trim().split(':').map(Number);
-            if (parts.every(n => !isNaN(n))) {
-                if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-                if (parts.length === 2) return parts[0] * 60 + parts[1];
+    sendLog(stage, details = {}) {
+        const logPayload = {
+            type: 'extractionDebugLog',
+            site: 'youtube',
+            stage: stage,
+            url: window.location.href,
+            timestamp: new Date().toISOString(),
+            details: details
+        };
+        try {
+            if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                chrome.runtime.sendMessage(logPayload).catch(() => {});
+            } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
+                browser.runtime.sendMessage(logPayload).catch(() => {});
             }
-        }
+        } catch (_) {}
+        console.log(`%c[YouTube Extractor] [${stage}]`, 'color: #0284c7; font-weight: bold;', details);
+    },
 
+    parseTimestampToSeconds(tsStr) {
+        if (!tsStr) return 0;
+        const parts = tsStr.trim().split(':').map(Number);
+        if (parts.some(isNaN)) return 0;
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        if (parts.length === 1) return parts[0];
+        return 0;
+    },
+
+    getDurationInSeconds() {
+        // 1. Check window.ytInitialPlayerResponse
+        try {
+            if (window.ytInitialPlayerResponse?.videoDetails?.lengthSeconds) {
+                const sec = parseInt(window.ytInitialPlayerResponse.videoDetails.lengthSeconds, 10);
+                if (sec > 0) return sec;
+            }
+        } catch (_) {}
+
+        // 2. Check meta duration in head (always main video, never ads)
         const metaDuration = document.querySelector('meta[itemprop="duration"]')?.getAttribute('content');
         if (metaDuration) {
             const match = metaDuration.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -139,7 +160,52 @@ Based on the information that follows, generate the summary.
             }
         }
 
+        // 3. Check document scripts for lengthSeconds or approxDurationMs
+        for (const s of document.scripts) {
+            if (s.textContent) {
+                const m = s.textContent.match(/"lengthSeconds":\s*"(\d+)"/);
+                if (m) {
+                    const sec = parseInt(m[1], 10);
+                    if (sec > 0) return sec;
+                }
+                const m2 = s.textContent.match(/"approxDurationMs":\s*"(\d+)"/);
+                if (m2) {
+                    const sec = Math.floor(parseInt(m2[1], 10) / 1000);
+                    if (sec > 0) return sec;
+                }
+            }
+        }
+
+        // 4. Check player UI time display
+        const timeDisplay = document.querySelector('.ytp-time-duration');
+        if (timeDisplay && timeDisplay.textContent) {
+            const parts = timeDisplay.textContent.trim().split(':').map(Number);
+            if (parts.every(n => !isNaN(n))) {
+                if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+                if (parts.length === 2) return parts[0] * 60 + parts[1];
+            }
+        }
+
+        // 5. Check HTML5 video element only if NOT an ad
+        const isAd = document.querySelector('.ad-showing, .ad-interrupting, .video-ads, .ytp-ad-player-overlay');
+        const video = document.querySelector('video.html5-main-video, video');
+        if (!isAd && video && video.duration && !isNaN(video.duration) && video.duration > 45) {
+            return Math.floor(video.duration);
+        }
+
         return 0;
+    },
+
+    getVideoDurationFormatted(duration) {
+        const dur = typeof duration === 'number' ? duration : this.getDurationInSeconds();
+        if (!dur || dur <= 0) return 'N/A';
+        const hours = Math.floor(dur / 3600);
+        const minutes = Math.floor((dur % 3600) / 60);
+        const seconds = Math.floor(dur % 60);
+        if (hours > 0) {
+            return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+        return `${minutes}:${String(seconds).padStart(2, '0')}`;
     },
 
     async getTranscript() {
@@ -155,7 +221,7 @@ Based on the information that follows, generate the summary.
             return false;
         };
 
-        const waitForElement = async (selector, timeout = 5000) => {
+        const waitForElement = async (selector, timeout = 4000) => {
             const start = Date.now();
             while (Date.now() - start < timeout) {
                 const element = document.querySelector(selector);
@@ -165,123 +231,100 @@ Based on the information that follows, generate the summary.
             return null;
         };
 
-        // Extract and format transcript from raw text lines containing timestamps
-        const parseTranscriptFromText = (rawText) => {
-            if (!rawText || rawText.length < 20) return null;
-            const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+        const scrapeSegmentsFromDocument = () => {
+            const segmentNodes = Array.from(document.querySelectorAll(
+                'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] transcript-segment-view-model, ' +
+                'ytd-engagement-panel-section-list-renderer[target-id*="transcript"] ytd-transcript-segment-renderer, ' +
+                'ytd-engagement-panel-section-list-renderer[target-id*="chapters"] transcript-segment-view-model, ' +
+                '#engagement-panel-searchable-transcript transcript-segment-view-model, ' +
+                '#engagement-panel-searchable-transcript ytd-transcript-segment-renderer, ' +
+                'transcript-segment-view-model, ' +
+                'ytd-transcript-segment-renderer'
+            )).filter(el => !el.closest('ytd-watch-next-secondary-results-renderer, #related'));
+
+            if (segmentNodes.length < 2) return null;
+
             let transcriptText = '';
             let currentParagraph = '';
             let currentTimestamp = '';
-            let foundCount = 0;
+            let firstTimestamp = '';
+            let lastTimestamp = '';
+            let lastTimestampSeconds = 0;
+            let count = 0;
+            const seen = new Set();
 
-            for (let i = 0; i < lines.length; i++) {
-                const line = lines[i];
-
-                // Skip navigation/header markers and duration tokens
-                if (/^(In this video|Chapters|Transcript|Search transcript|Search in video|English|Auto-generated|\d+\s+seconds?)$/i.test(line)) {
-                    continue;
-                }
-                if (line.startsWith('Chapter ')) {
-                    continue;
-                }
-
-                // Format 1: Standalone timestamp line (e.g. "0:00")
-                const timeOnly = line.match(/^(\d+:\d+(?::\d+)?)$/);
-                if (timeOnly) {
-                    const ts = timeOnly[1];
-                    let nextIdx = i + 1;
-                    while (nextIdx < lines.length && /^(\d+\s+seconds?)$/i.test(lines[nextIdx])) {
-                        nextIdx++;
-                    }
-                    const nextLine = lines[nextIdx] || '';
-                    if (nextLine && !/^(\d+:\d+(?::\d+)?)$/.test(nextLine) && !nextLine.startsWith('Chapter ')) {
-                        if (currentParagraph && currentParagraph.length > 200) {
+            for (const node of segmentNodes) {
+                const tsEl = node.querySelector('.ytwTranscriptSegmentViewModelTimestamp, .segment-timestamp, div[class*="Timestamp"]:not([class*="A11y"])');
+                const textEl = node.querySelector('span[role="text"], .ytAttributedStringHost, .segment-text, [class*="SegmentText"]');
+                if (tsEl && textEl) {
+                    const tsStr = tsEl.textContent.trim();
+                    const text = textEl.textContent.trim();
+                    if (tsStr && text) {
+                        const key = `${tsStr}_${text}`;
+                        if (seen.has(key)) continue;
+                        seen.add(key);
+                        
+                        if (currentParagraph && currentParagraph.length > 250) {
                             transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
                             currentParagraph = '';
                             currentTimestamp = '';
                         }
-                        if (!currentTimestamp) currentTimestamp = ts;
-                        currentParagraph += (currentParagraph ? ' ' : '') + nextLine;
-                        foundCount++;
-                        i = nextIdx;
+                        if (!currentTimestamp) currentTimestamp = tsStr;
+                        if (!firstTimestamp) firstTimestamp = tsStr;
+                        lastTimestamp = tsStr;
+                        lastTimestampSeconds = this.parseTimestampToSeconds(tsStr);
+                        currentParagraph += (currentParagraph ? ' ' : '') + text;
+                        count++;
                     }
-                    continue;
-                }
-
-                // Format 2: Line with timestamp prefix (e.g. "0:00 This is an NVIDIA B200.")
-                const timeWithText = line.match(/^(\d+:\d+(?::\d+)?)\s+(.*)/);
-                if (timeWithText) {
-                    const ts = timeWithText[1];
-                    const content = timeWithText[2].trim();
-                    if (content && !/^\d+\s+seconds?$/i.test(content)) {
-                        if (currentParagraph && currentParagraph.length > 200) {
-                            transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
-                            currentParagraph = '';
-                            currentTimestamp = '';
-                        }
-                        if (!currentTimestamp) currentTimestamp = ts;
-                        currentParagraph += (currentParagraph ? ' ' : '') + content;
-                        foundCount++;
-                    }
-                    continue;
-                }
-
-                // Format 3: Continuation speech text
-                if (foundCount > 0 && currentParagraph && !/^\d+\s+seconds?$/i.test(line)) {
-                    currentParagraph += ' ' + line;
                 }
             }
 
             if (currentParagraph) {
-                transcriptText += `[${currentTimestamp || '0:00'}] ${currentParagraph.trim()}\n\n`;
+                transcriptText += `[${currentTimestamp}] ${currentParagraph.trim()}\n\n`;
             }
 
-            return (foundCount >= 2) ? transcriptText.trim() : null;
-        };
+            if (count < 2) return null;
 
-        const tryExtractFromActivePanels = () => {
-            // Find all potential transcript panel containers in modern and legacy YouTube layouts
-            const panels = Array.from(document.querySelectorAll(
-                'ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"], ' +
-                '[target-id="PAmodern_transcript_view"], ' +
-                '[target-id="engagement-panel-searchable-transcript"], ' +
-                '[target-id*="transcript" i], ' +
-                'ytd-transcript-renderer, ' +
-                'ytd-transcript-search-panel-renderer, ' +
-                'ytd-transcript-segment-list-renderer, ' +
-                'ytd-engagement-panel-section-list-renderer:not([visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"])'
-            ));
-
-            for (const panel of panels) {
-                const text = panel.innerText;
-                const parsed = parseTranscriptFromText(text);
-                if (parsed) return parsed;
-            }
-
-            return null;
+            return {
+                text: transcriptText.trim(),
+                firstTimestamp: firstTimestamp || '0:00',
+                lastTimestamp: lastTimestamp || '0:00',
+                lastTimestampSeconds: lastTimestampSeconds || 0,
+                count: count
+            };
         };
 
         try {
-            // 1. Check if transcript is ALREADY open and readable in the DOM
-            let directResult = tryExtractFromActivePanels();
-            if (directResult) return directResult;
+            let durationSeconds = this.getDurationInSeconds();
+            this.sendLog('StartTranscriptScrape', { detectedDurationSeconds: durationSeconds, formattedDuration: this.getVideoDurationFormatted(durationSeconds) });
+
+            // 1. Check if complete transcript is ALREADY mounted in the document
+            let directResult = scrapeSegmentsFromDocument();
+            if (directResult) {
+                this.sendLog('DirectResultCheck', { count: directResult.count, lastTs: directResult.lastTimestamp, lastSec: directResult.lastTimestampSeconds, durationSeconds });
+                if (durationSeconds > 120 && directResult.lastTimestampSeconds >= durationSeconds - 120) {
+                    this.sendLog('DirectResultComplete', { count: directResult.count, lastTs: directResult.lastTimestamp });
+                    return directResult;
+                }
+            }
 
             // 2. Expand description if collapsed
             const expandBtn = await waitForElement(
                 'ytd-text-inline-expander#description-inline-expander #expand, ' +
+                '#description-inline-expander #expand, ' +
                 '#description #expand, ' +
                 'tp-yt-paper-button#expand, ' +
                 'ytd-text-inline-expander#description-inline-expander',
                 4000
             );
             if (expandBtn) {
-                expandBtn.click();
-                await new Promise(r => setTimeout(r, 400));
+                (expandBtn.querySelector('button') || expandBtn).click();
+                await new Promise(r => setTimeout(r, 350));
             }
 
             // 3. Click "Show transcript" button in description
             let clicked = false;
-            const descSection = await waitForElement('ytd-video-description-transcript-section-renderer', 2500);
+            const descSection = await waitForElement('ytd-video-description-transcript-section-renderer', 3000);
             if (descSection) {
                 const btn = descSection.querySelector('button, [role="button"]') || descSection;
                 btn.click();
@@ -294,39 +337,207 @@ Based on the information that follows, generate the summary.
 
             // 4. Fallback: Click 3-dots "More actions" menu -> Show transcript
             if (!clicked) {
-                const menuButton = await waitForElement('button[aria-label="More actions"], #actions button[aria-label*="More"], ytd-menu-renderer yt-icon-button#button', 2500);
+                const menuButton = await waitForElement('ytd-watch-metadata button[aria-label*="More"], ytd-menu-renderer yt-icon-button#button', 2000);
                 if (menuButton) {
                     menuButton.click();
-                    await new Promise(r => setTimeout(r, 400));
+                    await new Promise(r => setTimeout(r, 300));
                     clicked = clickButtonWithText('Show transcript') || clickButtonWithText('Open transcript') || clickButtonWithText('Transcript');
                 }
             }
 
-            // 5. If "In this video" panel opened on the Chapters tab, click the "Transcript" tab chip
-            const clickVisibleTranscriptTab = () => {
-                const transcriptChips = Array.from(document.querySelectorAll('yt-chip-cloud-chip-renderer, button, [role="tab"], tp-yt-paper-item, yt-formatted-string, span, div'))
-                    .filter(el => el.textContent && el.textContent.trim() === 'Transcript' && el.children.length === 0 && el.offsetParent !== null);
-                for (const chip of transcriptChips) {
-                    (chip.closest('button, [role="tab"], [role="button"], yt-chip-cloud-chip-renderer') || chip).click();
-                    return true;
+            this.sendLog('ActionButtons', { descriptionExpanded: !!expandBtn, showTranscriptClicked: clicked });
+
+            // Locate active transcript panels (includes both searchable transcript and chapter timeline panels)
+            const getTranscriptPanels = () => {
+                const panels = Array.from(document.querySelectorAll(
+                    'ytd-engagement-panel-section-list-renderer[target-id*="transcript"], ' +
+                    'ytd-engagement-panel-section-list-renderer[target-id*="chapters"], ' +
+                    'ytd-engagement-panel-section-list-renderer#engagement-panel-searchable-transcript, ' +
+                    '#engagement-panel-searchable-transcript, ' +
+                    'ytd-transcript-search-panel-renderer, ' +
+                    'ytd-transcript-renderer'
+                ));
+
+                if (panels.length === 0) {
+                    const allPanels = document.querySelectorAll('ytd-engagement-panel-section-list-renderer');
+                    for (const p of allPanels) {
+                        if (p.querySelector('transcript-segment-view-model, ytd-transcript-segment-renderer, .ytwTranscriptSegmentViewModelTimestamp, ytd-transcript-renderer')) {
+                            panels.push(p);
+                        }
+                    }
                 }
-                return false;
+                return panels;
             };
 
-            await new Promise(r => setTimeout(r, 500));
-            clickVisibleTranscriptTab();
+            const clickPanelTab = (panel, tabName) => {
+                const tabElements = Array.from(panel.querySelectorAll(
+                    'chip-view-model, yt-chip-cloud-chip-renderer, button[role="tab"], chip-bar-view-model button, tp-yt-paper-tab, [role="tab"]'
+                )).filter(el => el.textContent?.trim().toLowerCase() === tabName.toLowerCase());
 
-            // 6. Poll for rendered transcript lines in the panel (up to 8 seconds)
-            for (let i = 0; i < 35; i++) {
-                await new Promise(r => setTimeout(r, 200));
-                if (i === 2 || i === 6 || i === 12) {
-                    clickVisibleTranscriptTab();
+                for (const target of tabElements) {
+                    const candidates = [target, target.querySelector('button'), target.closest('chip-view-model, yt-chip-cloud-chip-renderer')].filter(Boolean);
+                    for (const el of candidates) {
+                        try {
+                            el.click();
+                            el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true }));
+                            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                            el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true }));
+                            el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                        } catch (_) {}
+                    }
                 }
-                const res = tryExtractFromActivePanels();
-                if (res) return res;
+            };
+
+            // Scroll transcript containers strictly inside the transcript panel
+            const scrollTranscriptList = () => {
+                const transcriptPanels = getTranscriptPanels();
+
+                for (const panel of transcriptPanels) {
+                    // 1. Scroll scrollable containers strictly INSIDE the transcript panel
+                    const scrollables = Array.from(panel.querySelectorAll('*')).filter(el => {
+                        if (el.scrollHeight <= el.clientHeight) return false;
+                        if (el.closest('ytd-watch-next-secondary-results-renderer, #related')) return false;
+                        return true;
+                    });
+                    if (panel.scrollHeight > panel.clientHeight) scrollables.push(panel);
+
+                    for (const el of scrollables) {
+                        try {
+                            el.scrollTop += 800;
+                            if (el.scrollTop + el.clientHeight >= el.scrollHeight - 100) {
+                                el.scrollTop = el.scrollHeight;
+                            }
+                            el.dispatchEvent(new Event('scroll', { bubbles: true }));
+                            el.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true }));
+                        } catch (_) {}
+                    }
+
+                    // 2. Scroll chapter headers strictly inside this transcript panel
+                    const chapterSections = panel.querySelectorAll(
+                        'yt-item-section-renderer, ytd-item-section-renderer, timeline-chapter-view-model, macro-markers-panel-item-view-model, ytd-macro-markers-list-item-renderer'
+                    );
+                    for (const section of chapterSections) {
+                        try {
+                            section.scrollIntoView({ block: 'end', behavior: 'instant' });
+                        } catch (_) {}
+                    }
+
+                    // 3. Trigger continuation loaders strictly inside this transcript panel
+                    const continuations = panel.querySelectorAll('ytd-continuation-item-renderer');
+                    for (const cont of continuations) {
+                        try {
+                            cont.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                            if (typeof cont.triggerContinuation === 'function') cont.triggerContinuation();
+                            if (typeof cont.onVisible === 'function') cont.onVisible();
+                            const btn = cont.querySelector('button, tp-yt-paper-button, [role="button"], tp-yt-paper-spinner');
+                            if (btn) btn.click();
+                            cont.dispatchEvent(new WheelEvent('wheel', { deltaY: 800, bubbles: true }));
+                            window.dispatchEvent(new Event('resize'));
+                        } catch (_) {}
+                    }
+
+                    // 4. Scroll last segment strictly inside this transcript panel into view
+                    const segs = panel.querySelectorAll('transcript-segment-view-model, ytd-transcript-segment-renderer, .ytwTranscriptSegmentViewModelHost');
+                    if (segs.length > 0) {
+                        try {
+                            segs[segs.length - 1].scrollIntoView({ block: 'end', behavior: 'instant' });
+                        } catch (_) {}
+                    }
+                }
+            };
+
+            // Switch to Timeline tab inside panels if present
+            await new Promise(r => setTimeout(r, 400));
+            const panels = getTranscriptPanels();
+            this.sendLog('PanelsLocated', { count: panels.length, panelIds: panels.map(p => p.getAttribute('target-id') || p.tagName) });
+
+            for (const panel of panels) {
+                const hasTimeline = Array.from(panel.querySelectorAll('chip-view-model, button[role="tab"]')).some(
+                    el => el.textContent?.trim().toLowerCase() === 'timeline'
+                );
+                if (hasTimeline) {
+                    clickPanelTab(panel, 'Timeline');
+                }
             }
+
+            let bestResult = null;
+            let lastSegmentCount = 0;
+            let unchangedRounds = 0;
+
+            // Extended Polling Loop
+            for (let i = 0; i < 120; i++) {
+                await new Promise(r => setTimeout(r, 250));
+
+                if (durationSeconds === 0) {
+                    durationSeconds = this.getDurationInSeconds();
+                }
+
+                scrollTranscriptList();
+
+                const currentRes = scrapeSegmentsFromDocument();
+                if (currentRes) {
+                    if (!bestResult || currentRes.count > bestResult.count) {
+                        bestResult = currentRes;
+                    }
+
+                    if (currentRes.lastTimestampSeconds > durationSeconds) {
+                        durationSeconds = Math.max(durationSeconds, currentRes.lastTimestampSeconds + 60);
+                    }
+
+                    if (i === 0 || i % 8 === 0 || currentRes.count !== lastSegmentCount) {
+                        const cov = durationSeconds > 0 ? ((currentRes.lastTimestampSeconds / durationSeconds) * 100).toFixed(1) + '%' : 'N/A';
+                        this.sendLog('Polling', {
+                            iteration: `${i + 1}/120`,
+                            segments: currentRes.count,
+                            range: `${currentRes.firstTimestamp} -> ${currentRes.lastTimestamp}`,
+                            lastSec: currentRes.lastTimestampSeconds,
+                            durationSeconds,
+                            coverage: cov,
+                            unchangedRounds
+                        });
+                    }
+
+                    if (i >= 4 && durationSeconds > 60 && currentRes.lastTimestampSeconds >= Math.max(30, durationSeconds - 120)) {
+                        this.sendLog('ResolvedComplete', {
+                            reason: 'Reached video end (>= duration - 120s)',
+                            segments: currentRes.count,
+                            range: `${currentRes.firstTimestamp} -> ${currentRes.lastTimestamp}`,
+                            durationSeconds
+                        });
+                        return currentRes;
+                    }
+
+                    if (currentRes.count === lastSegmentCount) {
+                        unchangedRounds++;
+                    } else {
+                        unchangedRounds = 0;
+                        lastSegmentCount = currentRes.count;
+                    }
+                } else if (i % 8 === 0) {
+                    this.sendLog('PollingNoSegments', { iteration: `${i + 1}/120`, durationSeconds });
+                }
+
+                if (bestResult && durationSeconds > 60 && bestResult.lastTimestampSeconds >= durationSeconds * 0.85 && unchangedRounds >= 16) {
+                    this.sendLog('ResolvedCoverage', {
+                        reason: 'Reached >= 85% coverage and stabilized',
+                        segments: bestResult.count,
+                        range: `${bestResult.firstTimestamp} -> ${bestResult.lastTimestamp}`,
+                        durationSeconds
+                    });
+                    return bestResult;
+                }
+            }
+
+            this.sendLog('ResolvedTimeout', {
+                reason: 'Reached 120 polling iterations (30s limit)',
+                segments: bestResult?.count || 0,
+                range: bestResult ? `${bestResult.firstTimestamp} -> ${bestResult.lastTimestamp}` : 'None',
+                durationSeconds
+            });
+            return bestResult;
         } catch (err) {
-            console.warn('UI transcript extraction error:', err);
+            this.sendLog('ExtractionError', { error: String(err), stack: err?.stack });
+            console.warn('Transcript extraction error:', err);
         }
 
         return null;
@@ -346,18 +557,6 @@ Based on the information that follows, generate the summary.
             return null;
         };
 
-        const getVideoDurationFormatted = () => {
-            const duration = this.getDurationInSeconds();
-            if (!duration || duration <= 0) return 'N/A';
-            const hours = Math.floor(duration / 3600);
-            const minutes = Math.floor((duration % 3600) / 60);
-            const seconds = Math.floor(duration % 60);
-            if (hours > 0) {
-                return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-            }
-            return `${minutes}:${String(seconds).padStart(2, '0')}`;
-        };
-
         const getVideoInfo = () => {
             const infoText = document.querySelector('ytd-watch-info-text #info, ytd-watch-metadata #info');
             return infoText ? infoText.textContent.trim() : 'N/A';
@@ -365,6 +564,9 @@ Based on the information that follows, generate the summary.
 
         const getDescription = () => {
             const selectors = [
+                '#description-inline-expander',
+                'ytd-watch-metadata #description-inline-expander',
+                'ytd-text-inline-expander#description-inline-expander',
                 'ytd-text-inline-expander#description-inline-expander yt-attributed-string',
                 'ytd-text-inline-expander#description-inline-expander yt-formatted-string',
                 '#description yt-attributed-string',
@@ -374,21 +576,23 @@ Based on the information that follows, generate the summary.
             let node = null;
             for (const s of selectors) {
                 node = document.querySelector(s);
-                if (node && node.innerText && node.innerText.trim()) break;
+                if (node && (node.innerText || node.textContent || '').trim()) break;
             }
-            if (!node || !node.innerText) return { text: 'N/A', links: [] };
-            let text = node.innerText.replace(/\n{3,}/g, '\n\n').trim();
+            if (!node) return { text: 'N/A', links: [] };
+            const raw = (node.innerText || node.textContent || '').trim();
+            if (!raw) return { text: 'N/A', links: [] };
+            let text = raw.replace(/\n{3,}/g, '\n\n').trim();
             const links = Array.from(node.querySelectorAll('a'))
-                .map(a => ({ href: a.href, text: (a.innerText || '').trim() }))
+                .map(a => ({ href: a.href, text: (a.innerText || a.textContent || '').trim() }))
                 .filter(l => l.href && l.href.startsWith('http'));
             return { text, links };
         };
 
         (async () => {
             try {
-                // Ensure page metadata and player components are mounted before extracting
-                await waitForElement('ytd-watch-metadata, #description-inline-expander, #movie_player, #title', 7000);
-                await new Promise(r => setTimeout(r, 400));
+                // Ensure page metadata and description components are fully mounted before extracting
+                await waitForElement('#description-inline-expander, ytd-watch-metadata, #description, #title h1, #title', 10000);
+                await new Promise(r => setTimeout(r, 600));
 
                 const titleElement = document.querySelector('#title h1, #title, ytd-watch-metadata #title');
                 const videoTitle = titleElement ? titleElement.textContent.trim() : document.title.replace(/ - YouTube$/, '');
@@ -396,7 +600,8 @@ Based on the information that follows, generate the summary.
                 const channelElement = document.querySelector('#channel-name #text, ytd-channel-name #text');
                 const channelName = channelElement ? channelElement.textContent.trim() : 'N/A';
 
-                const videoDuration = getVideoDurationFormatted();
+                const durationSeconds = this.getDurationInSeconds();
+                const videoDuration = this.getVideoDurationFormatted(durationSeconds);
                 const info = getVideoInfo();
                 const videoUrl = window.location.href;
 
@@ -405,11 +610,46 @@ Based on the information that follows, generate the summary.
                 const descriptionLinks = descResult.links;
 
                 // 1. Pure UI Click & Copy transcript extraction
-                let transcriptText = await this.getTranscript();
+                const transcriptResult = await this.getTranscript();
 
-                // 2. Fallback if captions are not returned
-                if (!transcriptText) {
-                    transcriptText = `Transcript could not be extracted directly (captions may be disabled or processing). Please use the video URL and detailed description/chapters above to analyze the content: ${videoUrl}`;
+                let transcriptText = '';
+                let transcriptStatus = '';
+                let warningBanner = '';
+
+                if (!transcriptResult || !transcriptResult.text || transcriptResult.count < 2) {
+                    transcriptStatus = '⚠️ Unavailable';
+                    transcriptText = `Transcript could not be extracted directly (captions may be disabled, unservable, or processing). Please use the video URL and detailed description/chapters above to analyze the content: ${videoUrl}`;
+                    warningBanner = `> [!WARNING]
+> **Transcript Unavailable**: A full transcript could not be extracted for this video (captions may be disabled, unservable, or still processing on YouTube). The summary must rely primarily on the video title, description, chapters, and external URLs.`;
+                } else {
+                    transcriptText = transcriptResult.text;
+                    const lastSec = transcriptResult.lastTimestampSeconds;
+                    const lastTs = transcriptResult.lastTimestamp;
+                    const firstTs = transcriptResult.firstTimestamp;
+
+                    // Evaluate whether transcript is genuinely incomplete
+                    // (e.g., missing > 20% and > 2 minutes, or missing > 5 minutes for long videos)
+                    let isSubstantiallyIncomplete = false;
+                    let coveragePercent = 100;
+
+                    if (durationSeconds > 60 && lastSec > 0) {
+                        const remainingSeconds = durationSeconds - lastSec;
+                        const coverageRatio = lastSec / durationSeconds;
+                        coveragePercent = Math.min(100, Math.round(coverageRatio * 100));
+
+                        if ((coverageRatio < 0.80 && remainingSeconds > 120) || (remainingSeconds > 300 && durationSeconds > 1800)) {
+                            isSubstantiallyIncomplete = true;
+                        }
+                    }
+
+                    if (isSubstantiallyIncomplete) {
+                        transcriptStatus = `⚠️ Incomplete (Coverage: ${firstTs} - ${lastTs} | ~${coveragePercent}% of ${videoDuration})`;
+                        warningBanner = `> [!WARNING]
+> **Transcript Incomplete**: The video duration is ${videoDuration}, but the extracted transcript only covers up to ${lastTs} (~${coveragePercent}% of the video). Portions of the video after ${lastTs} are not included in the transcript. Please summarize the transcribed portion in detail and synthesize remaining sections from the description/chapters while noting this limitation.`;
+                    } else {
+                        transcriptStatus = '✓ Complete';
+                        warningBanner = '';
+                    }
                 }
 
                 const extractionDate = new Date().toLocaleString();
@@ -431,8 +671,10 @@ Based on the information that follows, generate the summary.
                 }
 
                 const prompt = this.getPrompt();
+                const warningBlock = warningBanner ? `\n\n${warningBanner}\n` : '';
+
                 let fullText = `${prompt}
-${metadataText}
+${metadataText}${warningBlock}
 ${footnotesText}
 
 Here is the description:
@@ -445,7 +687,7 @@ Here is the transcript:
 ${transcriptText}
 </transcript>`;
 
-                let contentOnlyText = `${metadataText}
+                let contentOnlyText = `${metadataText}${warningBlock}
 ${footnotesText}
 
 Here is the description:
@@ -458,6 +700,15 @@ Here is the transcript:
 ${transcriptText}
 </transcript>`.trim();
 
+                this.sendLog('DispatchExtractedText', {
+                    videoTitle,
+                    videoDuration,
+                    transcriptStatus,
+                    hasWarning: !!warningBanner,
+                    transcriptChars: transcriptText.length,
+                    totalChars: fullText.length
+                });
+
                 chrome.runtime.sendMessage({
                     type: 'extractedText',
                     text: fullText,
@@ -467,6 +718,8 @@ ${transcriptText}
                     videoChannel: channelName,
                     videoUrl: videoUrl,
                     videoDuration: videoDuration,
+                    transcriptStatus: transcriptStatus,
+                    hasWarning: !!warningBanner,
                     info: info,
                     videoDescription: descriptionText,
                     videoDescriptionLinks: descriptionLinks,
@@ -731,7 +984,37 @@ ${transcriptText}
         });
     }
 
+    function checkAutoExtract() {
+        if (!window.location.href.includes('/watch') && !window.location.href.includes('v=')) return;
+        try {
+            if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                chrome.runtime.sendMessage({ type: 'checkPendingAction' }, async (response) => {
+                    if (typeof chrome !== 'undefined' && chrome.runtime?.lastError) return;
+                    if (response && response.shouldExtract) {
+                        // Wait for watch page player, metadata, and description to initialize
+                        for (let t = 0; t < 25; t++) {
+                            const duration = window.youtubeExtractor?.getDurationInSeconds() || 0;
+                            const hasDesc = !!document.querySelector('#description, ytd-watch-metadata, #description-inline-expander');
+                            if (duration > 0 && hasDesc) {
+                                break;
+                            }
+                            await new Promise(r => setTimeout(r, 200));
+                        }
+
+                        if (window.youtubeExtractor?.extract) {
+                            window.youtubeExtractor.extract();
+                        }
+                    }
+                });
+            }
+        } catch (e) {}
+    }
+
     injectCardButtons();
     setInterval(injectCardButtons, 1000);
-    window.addEventListener('yt-navigate-finish', () => setTimeout(injectCardButtons, 500));
+    checkAutoExtract();
+    window.addEventListener('yt-navigate-finish', () => {
+        setTimeout(injectCardButtons, 500);
+        setTimeout(checkAutoExtract, 500);
+    });
 })();
