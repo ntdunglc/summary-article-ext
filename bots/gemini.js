@@ -1,3 +1,5 @@
+const GEMINI_FLASH_HIGH_LOCK_ATTR = 'data-gemini-flash-high-lock';
+
 window.geminiBot = {
     async waitForElement(selector, maxAttempts = 20, delay = 500) {
         for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -8,160 +10,290 @@ window.geminiBot = {
         return null;
     },
 
-    async selectExtendedThinking() {
-        console.log('selectExtendedThinking: started');
-        const isAlreadyChecked = (el) => {
-            const interactive = el.closest('mat-slide-toggle, [role="switch"], [role="checkbox"], button, [role="menuitem"], [role="option"]') || el;
-            const hasCheckedClass = Array.from(interactive.classList).some(cls => 
-                cls.toLowerCase().includes('checked') || cls.toLowerCase().includes('selected')
-            );
-            return interactive.getAttribute('aria-checked') === 'true' ||
-                   interactive.getAttribute('aria-selected') === 'true' ||
-                   interactive.checked === true ||
-                   hasCheckedClass;
-        };
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    },
 
-        const findToggle = (searchRoot = document) => {
-            const elements = Array.from(searchRoot.querySelectorAll('*')).reverse();
-            
-            const isVisible = (el) => {
-                const style = window.getComputedStyle(el);
-                return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    isVisible(el) {
+        if (!el) return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0' && el.offsetWidth > 0;
+    },
+
+    isItemChecked(el) {
+        if (!el) return false;
+        return el.classList.contains('selected') ||
+               el.getAttribute('aria-checked') === 'true' ||
+               el.getAttribute('aria-selected') === 'true' ||
+               el.querySelector('gem-menu-item-content.selected, [aria-label="Selected"], mat-icon[fonticon="check"], mat-icon[data-mat-icon-name="check"]') !== null;
+    },
+
+    isItemDisabled(el) {
+        if (!el) return true;
+        return el.getAttribute('aria-disabled') === 'true' ||
+               el.classList.contains('disabled') ||
+               el.querySelector('.disabled') !== null;
+    },
+
+    isSidebarElement(el) {
+        if (!el) return false;
+        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
+        if (aria.includes('settings') || aria.includes('sidebar') || aria.includes('close') || aria.includes('upload') || aria.includes('add files') || aria.includes('dictate')) {
+            return true;
+        }
+        // Note: <side-navigation-v2> wraps the entire app including <bard-sidenav-content> (main chat area).
+        if (el.closest('bard-mode-switcher, .model-picker-container, input-area-v2, .input-area, .text-input-field')) {
+            return false;
+        }
+        return !!el.closest('bard-sidenav, side-navigation-content, sidenav-mavatar-footer, nav, aside, .side-nav');
+    },
+
+    findModeButton() {
+        const selectors = [
+            '[data-test-id="bard-mode-menu-button"]',
+            'bard-mode-switcher button',
+            '.model-picker-container button',
+            'button.input-area-switch',
+            'button[aria-label*="mode picker" i]',
+            'button[aria-label*="model picker" i]'
+        ];
+        for (const sel of selectors) {
+            const btns = document.querySelectorAll(sel);
+            for (const btn of btns) {
+                if (this.isVisible(btn) && !this.isSidebarElement(btn)) return btn;
+            }
+        }
+
+        const inputScope = document.querySelector('bard-mode-switcher, .model-picker-container, input-area-v2, .input-area, .text-input-field');
+        if (inputScope) {
+            const buttons = inputScope.querySelectorAll('button, [role="button"]');
+            for (const btn of buttons) {
+                if (!this.isVisible(btn) || this.isSidebarElement(btn)) continue;
+                const txt = (btn.textContent || '').trim().toLowerCase();
+                const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+                if ((txt.startsWith('flash') || txt.startsWith('pro') || txt.includes('flash-lite') || aria.includes('mode picker') || aria.includes('model picker')) && txt.length < 40) {
+                    return btn;
+                }
+            }
+        }
+
+        return null;
+    },
+
+    isHighSelectedOnButton(btn = this.findModeButton()) {
+        if (!btn) return false;
+        const text = (btn.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        return text.includes('high') || aria.includes('high');
+    },
+
+    isFlashHighSelectedOnButton(btn = this.findModeButton()) {
+        return this.isHighSelectedOnButton(btn);
+    },
+
+    isModelMenu(el) {
+        if (!el) return false;
+        const txt = (el.textContent || '').toLowerCase();
+        return (txt.includes('flash') || txt.includes('pro') || txt.includes('argon') || txt.includes('thinking')) && !txt.includes('personal intelligence');
+    },
+
+    getOpenMenu() {
+        const menus = document.querySelectorAll('gem-menu, [role="menu"]');
+        for (const menu of menus) {
+            if (this.isVisible(menu)) {
+                if (!this.isModelMenu(menu) && menu.textContent.toLowerCase().includes('personal intelligence')) {
+                    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                    return null;
+                }
+                if (this.isModelMenu(menu)) return menu;
+            }
+        }
+        return null;
+    },
+
+    async openMenu() {
+        let menu = this.getOpenMenu();
+        if (menu) return menu;
+
+        const btn = this.findModeButton();
+        if (!btn) return null;
+
+        if (btn.getAttribute('aria-expanded') !== 'true') {
+            btn.click();
+        }
+
+        for (let i = 0; i < 20; i++) {
+            await this.sleep(100);
+            menu = this.getOpenMenu();
+            if (menu) return menu;
+
+            if (i === 7 && btn.getAttribute('aria-expanded') !== 'true') {
+                const target = btn.querySelector('.mdc-button__label, .logo-pill-label-container') || btn;
+                target.click();
+            }
+        }
+
+        return this.getOpenMenu();
+    },
+
+    async closeMenu() {
+        const btn = this.findModeButton();
+        if (!this.getOpenMenu() && btn?.getAttribute('aria-expanded') !== 'true') {
+            return;
+        }
+        const editor = document.querySelector('div.ql-editor[contenteditable="true"], [contenteditable="true"]');
+        if (editor) {
+            editor.focus();
+            editor.click();
+            await this.sleep(150);
+        }
+        if (this.getOpenMenu() || btn?.getAttribute('aria-expanded') === 'true') {
+            if (btn && btn.getAttribute('aria-expanded') === 'true') {
+                btn.click();
+                await this.sleep(150);
+            } else {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+                await this.sleep(150);
+            }
+        }
+    },
+
+    getItemLabel(it) {
+        return (it.querySelector('.label')?.textContent || it.textContent || '').trim().toLowerCase();
+    },
+
+    getItemSublabel(it) {
+        return (it.querySelector('.sublabel')?.textContent || '').trim().toLowerCase();
+    },
+
+    simulateRealClick(el) {
+        if (!el) return;
+        const rect = el.getBoundingClientRect();
+        const x = rect.left + rect.width / 2;
+        const y = rect.top + rect.height / 2;
+        const eventOpts = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: x,
+            clientY: y,
+            screenX: x,
+            screenY: y,
+            button: 0,
+            buttons: 1
+        };
+        try {
+            el.dispatchEvent(new PointerEvent('pointerdown', { ...eventOpts, pointerType: 'mouse', isPrimary: true, pointerId: 1 }));
+            el.dispatchEvent(new MouseEvent('mousedown', eventOpts));
+            el.dispatchEvent(new PointerEvent('pointerup', { ...eventOpts, pointerType: 'mouse', isPrimary: true, pointerId: 1, buttons: 0 }));
+            el.dispatchEvent(new MouseEvent('mouseup', { ...eventOpts, buttons: 0 }));
+        } catch (_) {}
+        el.click();
+    },
+
+    findHighItem(items) {
+        return items.find(it => {
+            if (it.getAttribute('data-test-id') === 'mode-picker-sign-in-button' || it.classList.contains('mode-picker-sign-in-button')) {
+                return false;
+            }
+            const label = this.getItemLabel(it);
+            const sublabel = this.getItemSublabel(it);
+            return label === 'high' || /\bhigh\b/.test(label) || sublabel.includes('extra thorough');
+        });
+    },
+
+    async selectFlashHigh() {
+        const initialBtn = this.findModeButton();
+        if (initialBtn && this.isHighSelectedOnButton(initialBtn)) {
+            return true;
+        }
+
+        if (document.documentElement.getAttribute(GEMINI_FLASH_HIGH_LOCK_ATTR) === '1') {
+            for (let i = 0; i < 30; i++) {
+                await this.sleep(100);
+                if (document.documentElement.getAttribute(GEMINI_FLASH_HIGH_LOCK_ATTR) !== '1') break;
+            }
+            return this.isHighSelectedOnButton();
+        }
+
+        document.documentElement.setAttribute(GEMINI_FLASH_HIGH_LOCK_ATTR, '1');
+        try {
+            let menu = await this.openMenu();
+            if (!menu) return false;
+
+            const getMenuItems = async () => {
+                for (let i = 0; i < 15; i++) {
+                    const items = Array.from(document.querySelectorAll('gem-menu-item, [role="menuitem"]'));
+                    if (items.length >= 2) return items;
+                    await this.sleep(100);
+                }
+                return Array.from(document.querySelectorAll('gem-menu-item, [role="menuitem"]'));
             };
 
-            // Pass 1: Strict leaf target options first (case-insensitive exact match)
-            const leafTargets = ['extended thinking', 'extended', 'deep think'];
-            for (const el of elements) {
-                if (el.textContent && isVisible(el)) {
-                    const text = el.textContent.trim().toLowerCase();
-                    if (leafTargets.includes(text)) {
-                        return el;
-                    }
+            let items = await getMenuItems();
+
+            // 1. Ensure Flash model is selected (not Flash-Lite, not Pro)
+            const flashItem = items.find(it => {
+                const text = it.textContent.toLowerCase();
+                return text.includes('flash') && !text.includes('lite') && !text.includes('fastest');
+            });
+
+            if (flashItem && !this.isItemChecked(flashItem)) {
+                this.simulateRealClick(flashItem.querySelector('gem-menu-item-content') || flashItem);
+                await this.sleep(400);
+                menu = await this.openMenu();
+                if (menu) items = await getMenuItems();
+            }
+
+            // 2. Expand Thinking level submenu if present
+            let highItem = this.findHighItem(items);
+            if (!highItem) {
+                const thinkingLevelTrigger = items.find(it => (it.textContent || '').toLowerCase().includes('thinking level'));
+                if (thinkingLevelTrigger) {
+                    this.simulateRealClick(thinkingLevelTrigger.querySelector('gem-menu-item-content') || thinkingLevelTrigger);
+                    await this.sleep(300);
+                    items = await getMenuItems();
+                    highItem = this.findHighItem(items);
                 }
             }
 
-            // Pass 2: Submenu triggers second (case-insensitive exact match)
-            const triggerTargets = ['thinking level', 'thinking', 'reasoning'];
-            for (const el of elements) {
-                if (el.textContent && isVisible(el)) {
-                    const text = el.textContent.trim().toLowerCase();
-                    if (triggerTargets.includes(text)) {
-                        return el;
-                    }
-                }
-            }
-
-            // Pass 3: Partial matches
-            for (const el of elements) {
-                if (el.textContent && isVisible(el)) {
-                    const text = el.textContent.toLowerCase();
-                    if (text.includes('extended thinking') || text.includes('deep think') || text.includes('thinking level')) {
-                        return el;
-                    }
-                }
-            }
-
-            return searchRoot.querySelector('[aria-label*="Extended thinking" i]') ||
-                   searchRoot.querySelector('[aria-label*="Thinking level" i]') ||
-                   searchRoot.querySelector('[aria-label*="Deep Think" i]');
-        };
-
-        const waitForToggleElement = async (maxAttempts = 15, delay = 300, searchRoot = document) => {
-            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-                const element = findToggle(searchRoot);
-                if (element) { return element; }
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-            return null;
-        };
-
-        // 1. Check if visible directly on page
-        let toggle = findToggle(document);
-        if (toggle) {
-            console.log('selectExtendedThinking: Found toggle directly on the page:', toggle);
-            if (!isAlreadyChecked(toggle)) {
-                const clickable = toggle.closest('mat-slide-toggle, [role="switch"], [role="checkbox"], button') || toggle;
-                console.log('selectExtendedThinking: Clicking page toggle:', clickable);
-                clickable.click();
-                await new Promise(resolve => setTimeout(resolve, 500));
-            } else {
-                console.log('selectExtendedThinking: Extended thinking is already enabled on page.');
-            }
-            return;
-        }
-
-        // 2. Open model picker menu
-        console.log('selectExtendedThinking: Toggle not visible directly. Waiting for model picker button...');
-        const modeButtonSelector = '[data-test-id="bard-mode-menu-button"], button[aria-label*="mode picker"], button[aria-label*="Mode picker"]';
-        const modeButton = await this.waitForElement(modeButtonSelector, 20, 500);
-        if (!modeButton) {
-            console.warn('selectExtendedThinking: Model picker button not found.');
-            return;
-        }
-
-        console.log('selectExtendedThinking: Clicking model picker button:', modeButton);
-        modeButton.click();
-        
-        // 3. Search inside the menu, waiting for it to appear
-        console.log('selectExtendedThinking: Waiting for toggle inside menu...');
-        const overlay = document.querySelector('.cdk-overlay-container');
-        toggle = await waitForToggleElement(15, 300, overlay || document);
-        
-        if (toggle) {
-            console.log('selectExtendedThinking: Found element inside menu:', toggle);
-            const clickable = toggle.closest('mat-slide-toggle, [role="switch"], [role="checkbox"], button, [role="menuitem"], [role="menuitemradio"]') || toggle;
-            
-            // Check if it's a submenu trigger (has aria-haspopup="true")
-            const isSubmenuTrigger = clickable.getAttribute('aria-haspopup') === 'true';
-            
-            if (isSubmenuTrigger) {
-                console.log('selectExtendedThinking: Clickable is a submenu trigger, clicking it to expand:', clickable);
-                clickable.click();
-                await new Promise(resolve => setTimeout(resolve, 600)); // wait for submenu to animate open
-                
-                // Now search for the target leaf option inside the submenu
-                console.log('selectExtendedThinking: Searching for the leaf option inside the submenu...');
-                const subMenuToggle = await waitForToggleElement(15, 300, overlay || document);
-                if (subMenuToggle) {
-                    console.log('selectExtendedThinking: Found leaf option inside submenu:', subMenuToggle);
-                    const leafClickable = subMenuToggle.closest('mat-slide-toggle, [role="switch"], [role="checkbox"], button, [role="menuitem"], [role="menuitemradio"]') || subMenuToggle;
-                    if (!isAlreadyChecked(leafClickable)) {
-                        console.log('selectExtendedThinking: Clicking leaf option:', leafClickable);
-                        leafClickable.click();
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                    } else {
-                        console.log('selectExtendedThinking: Leaf option is already enabled.');
-                    }
+            if (highItem && !this.isItemDisabled(highItem)) {
+                if (!this.isItemChecked(highItem)) {
+                    this.simulateRealClick(highItem.querySelector('gem-menu-item-content') || highItem);
+                    await this.sleep(350);
                 } else {
-                    console.warn('selectExtendedThinking: Could not find Extended option inside the submenu.');
+                    await this.closeMenu();
                 }
             } else {
-                // Direct toggle (not a submenu)
-                if (!isAlreadyChecked(clickable)) {
-                    console.log('selectExtendedThinking: Clicking direct toggle:', clickable);
-                    clickable.click();
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                } else {
-                    console.log('selectExtendedThinking: Extended thinking is already enabled.');
-                }
+                await this.closeMenu();
+                return false;
             }
-        } else {
-            console.warn('selectExtendedThinking: Could not find Extended thinking option in the menu after opening.');
-        }
 
-        // 4. Close the menu
-        console.log('selectExtendedThinking: Closing menu...');
-        const backdrop = document.querySelector('.cdk-overlay-backdrop');
-        if (backdrop) {
-            console.log('selectExtendedThinking: Clicking backdrop to close menu');
-            backdrop.click();
-            await new Promise(resolve => setTimeout(resolve, 300));
-        } else {
-            console.log('selectExtendedThinking: Dispatching Escape to close menu');
-            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
-            await new Promise(resolve => setTimeout(resolve, 300));
+            await this.closeMenu();
+
+            const editor = document.querySelector('div.ql-editor[contenteditable="true"], [contenteditable="true"]');
+            if (editor) {
+                editor.focus();
+            }
+
+            for (let i = 0; i < 10; i++) {
+                if (this.isHighSelectedOnButton()) {
+                    this.sendDebugLog('GeminiSelectFlashHighComplete', { verified: true });
+                    return true;
+                }
+                await this.sleep(100);
+            }
+            return this.isHighSelectedOnButton();
+        } catch (err) {
+            console.warn('[Gemini Bot] Error selecting High thinking level:', err);
+            return false;
+        } finally {
+            document.documentElement.removeAttribute(GEMINI_FLASH_HIGH_LOCK_ATTR);
         }
-        console.log('selectExtendedThinking: complete');
+    },
+
+    async selectExtendedThinking() {
+        return this.selectFlashHigh();
     },
 
     sendDebugLog(stage, details = {}) {
@@ -185,13 +317,21 @@ window.geminiBot = {
 
     async input(text) {
         // 1. Select the editor using the class and role
-        const promptBoxSelector = 'div.ql-editor[contenteditable="true"], [contenteditable="true"]'; 
+        const promptBoxSelector = 'div.ql-editor[contenteditable="true"], [contenteditable="true"]';
         const promptBox = await this.waitForElement(promptBoxSelector);
 
         if (!promptBox) {
             this.sendDebugLog('GeminiError', { error: 'Prompt box not found' });
             console.error('Prompt box not found.');
             return;
+        }
+
+        // Wait for the mode switcher toolbar element to mount and select Flash + High before inputting prompt
+        await this.waitForElement('[data-test-id="bard-mode-menu-button"], bard-mode-switcher button, button.input-area-switch', 15, 250);
+        try {
+            await this.selectFlashHigh();
+        } catch (err) {
+            console.warn('[Gemini Bot] Initial selectFlashHigh warning:', err);
         }
 
         this.sendDebugLog('GeminiInputStart', {
@@ -225,11 +365,9 @@ window.geminiBot = {
         };
 
         // 3. Strategy 1: Copy to system clipboard and trigger trusted native browser paste
-        // With clipboardRead/Write extension permissions, document.execCommand('paste') triggers the exact same native C++ paste path as Cmd+V
         let pasteSucceeded = false;
         let origClipboard = null;
         try {
-            // Backup user's original clipboard content if readable
             if (navigator.clipboard && navigator.clipboard.readText) {
                 origClipboard = await navigator.clipboard.readText().catch(() => null);
             }
@@ -245,7 +383,6 @@ window.geminiBot = {
             const ok = document.execCommand('paste');
             this.sendDebugLog('GeminiSystemClipboardPaste', { execCommandReturned: ok, textLength: text.length });
 
-            // Poll for native paste to land in the DOM/Quill editor
             for (let attempt = 0; attempt < 15; attempt++) {
                 await new Promise(r => setTimeout(r, 100));
                 const len = (promptBox.textContent || '').length;
@@ -256,7 +393,6 @@ window.geminiBot = {
                 }
             }
 
-            // Restore user's previous clipboard content
             if (origClipboard !== null && origClipboard !== text) {
                 copyTextToClipboard(origClipboard);
             }
@@ -268,8 +404,8 @@ window.geminiBot = {
         let currentDomLength = (promptBox.textContent || '').length;
         if (!pasteSucceeded && currentDomLength < text.length * 0.8) {
             try {
-                const quill = promptBox.__quill || 
-                              promptBox.__quillInstance || 
+                const quill = promptBox.__quill ||
+                              promptBox.__quillInstance ||
                               (typeof window.Quill !== 'undefined' && window.Quill.find ? window.Quill.find(promptBox) : null);
                 if (quill && typeof quill.setText === 'function') {
                     quill.setText(text);
@@ -281,22 +417,22 @@ window.geminiBot = {
 
             currentDomLength = (promptBox.textContent || '').length;
             if (currentDomLength < text.length * 0.8) {
-                this.sendDebugLog('GeminiHtmlFallback', {
+                this.sendDebugLog('GeminiDomFallback', {
                     currentDomLength,
                     incomingLength: text.length
                 });
-                const formattedHtml = text
-                    .split('\n')
-                    .map(line => {
-                        if (line.trim() === '') return '<p><br></p>';
-                        const escaped = line
-                            .replace(/&/g, '&amp;')
-                            .replace(/</g, '&lt;')
-                            .replace(/>/g, '&gt;');
-                        return `<p>${escaped}</p>`;
-                    })
-                    .join('');
-                promptBox.innerHTML = formattedHtml;
+                while (promptBox.firstChild) {
+                    promptBox.removeChild(promptBox.firstChild);
+                }
+                for (const line of text.split('\n')) {
+                    const p = document.createElement('p');
+                    if (line.trim() === '') {
+                        p.appendChild(document.createElement('br'));
+                    } else {
+                        p.textContent = line;
+                    }
+                    promptBox.appendChild(p);
+                }
                 promptBox.classList.remove('ql-blank');
             }
         }
@@ -316,6 +452,15 @@ window.geminiBot = {
         // 8. Wait 1200ms for Angular / Quill state to fully synchronize before sending
         await new Promise(resolve => setTimeout(resolve, 1200));
 
+        // Verify Flash + High is selected right before submitting the prompt
+        if (!this.isFlashHighSelectedOnButton()) {
+            try {
+                await this.selectFlashHigh();
+            } catch (err) {
+                console.warn('[Gemini Bot] Pre-submit selectFlashHigh warning:', err);
+            }
+        }
+
         // Selector for the enabled send button
         const sendButtonSelector = 'button[aria-label="Send message"]:not([aria-disabled="true"]), button.send-button:not([disabled])';
         const sendButton = await this.waitForElement(sendButtonSelector, 15, 400);
@@ -329,6 +474,3 @@ window.geminiBot = {
         }
     }
 };
-
-// --- Usage ---
-// window.geminiBot.input("Hello from the console!");
