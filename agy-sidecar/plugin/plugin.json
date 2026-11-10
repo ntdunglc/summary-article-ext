@@ -1,0 +1,5 @@
+{
+  "name": "yt-digest",
+  "description": "Always-on YouTube digest: watches your subscriptions feed hourly, picks long-form and technical videos, summarizes them with Gemini Flash agents, and lets you summarize skipped videos with one click.",
+  "logo": "assets/logo.svg"
+}

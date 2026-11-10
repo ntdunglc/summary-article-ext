@@ -77,7 +77,7 @@ Analyze the following data to generate your response.
         const hnTitle = document.querySelector('.titleline')?.innerText || '';
         const articleUrl = document.querySelector('.titleline a')?.href || '';
         const points = document.querySelector('.score')?.innerText || '0 points';
-        const author = document.querySelector('.subtext .hnuser')?.innerText || '';
+        const author = document.querySelector('.subtext .hnuser, .subtext a[href^="user?id="]')?.innerText || '';
         const age = document.querySelector('.age')?.innerText || '';
         const commentCount = document.querySelector('.subtext a:last-child')?.innerText || '0 comments';
         const hnUrl = window.location.href;
@@ -102,9 +102,9 @@ Analyze the following data to generate your response.
 ### Hacker News Discussion
 `;
         document.querySelectorAll('.comtr').forEach(comment => {
-            const indent = parseInt(comment.querySelector('.ind img')?.width || '0');
-            const level = indent / 40;
-            const username = comment.querySelector('.hnuser')?.innerText || '';
+            const indent = parseInt(comment.querySelector('.ind img')?.width || comment.querySelector('.ind')?.getAttribute('indent') * 40 || '0');
+            const level = Math.round(indent / 40);
+            const username = comment.querySelector('.hnuser, .comhead a[href^="user?id="]')?.innerText || '';
             const text = comment.querySelector('.commtext')?.innerText || '';
             const commentAge = comment.querySelector('.age')?.innerText || '';
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Summarizer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Summarizes articles and YouTube videos using selected AI providers",
   "permissions": ["activeTab", "scripting", "tabs", "storage", "contextMenus", "clipboardWrite", "clipboardRead"],
   "action": {
@@ -31,7 +31,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["Readability.js", "bots/*.js", "sites/*.js"],
+      "resources": ["Readability.js", "bots/*.js", "sites/*.js", "options.html", "options.js"],
       "matches": ["<all_urls>"]
     }
   ],

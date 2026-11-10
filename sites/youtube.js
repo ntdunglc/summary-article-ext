@@ -39,27 +39,25 @@ Your output must strictly follow the markdown template below. Do not add any int
 ---
 
 ### Timestamped Walkthrough
-Create an **in-depth, highly granular walkthrough** that follows the video's structure. The depth and detail of this walkthrough MUST scale proportionally with the video's total duration. A long podcast or lecture should result in a highly detailed walkthrough with many sections.
+Create a **concise, high-signal walkthrough** of the video's major themes so the reader gets the full substance in **~10–15% of the time it would take to watch** (never write a blow-by-blow rewrite that takes nearly as long to read as the segment itself).
 
-**Sectioning Rules:**
-- **Topic-Based, Not Time-Based:** NEVER split a section just because a certain amount of time has passed. A section should be exactly as long or as short as the specific topic requires.
-- **Sub-Arguments for Long Themes:** If a single overarching topic lasts a very long time, do not keep it as one massive block. Break it down logically by the speaker's sub-arguments, new examples, or narrative shifts.
-- **Continuous Coverage:** Ensure chronological continuity. Do not leave unexplained gaps in time between sections (the end timestamp of one section should generally be the start timestamp of the next, unless explicitly skipping an ad read).
-- **Strict Heading Format:** You MUST format every single section and subsection exactly as shown below, using a Level 4 Markdown heading (####).
+**Sectioning & Brevity Rules:**
+- **Major Thematic Chapters Only:** Group the video into broad, meaningful chapters spanning roughly **3–8 minutes each** (aim for **4–6 sections** for a 10–25 min video, **6–9 sections** for a 25–60 min video, and **8–12 sections** for a 60+ min podcast). NEVER slice the video into 1–2 minute micro-segments.
+- **Continuous Coverage:** Keep timestamps contiguous from start to finish (\`[Start Time - End Time]\`), merging adjacent sub-points into a single thematic chapter.
+- **Strict Length Cap per Section:** Write **2–4 tight bullet points per section** (1–2 sentences per bullet). Synthesize the core argument, mechanism, or concrete example—omit throat-clearing, anecdotes, and repetition.
+- **Selective Quotes:** Include **at most 1 short verbatim quote** per section, and only when the exact phrasing is memorable or load-bearing.
+- **Strict Heading Format:** Format every section using a Level 4 Markdown heading (\`####\`):
 
 **FORMAT EXACTLY LIKE THIS FOR EVERY SECTION:**
 
-#### [Start Time - End Time] Specific Topic/Subsection Title
-- Write a summary of that segment's content, capturing all main ideas, supporting arguments, and specific examples.
-- **Integrate multiple key verbatim quotes** to capture the speaker's exact phrasing and tone.
-- **Clearly explain** any complex concepts, jargon, or acronyms as they are introduced.
-- Ensure the summary flows logically and connects the ideas presented within that segment.
-- Highlight key ideas and phrases.
+#### [Start Time - End Time] Specific Topic/Chapter Title
+- Distill the core claim, technical mechanism, or takeaway in 2–4 concise bullets.
+- Define any critical new jargon inline in one short clause, and include at most one short verbatim quote if genuinely impactful.
 
-#### [Next Start Time - Next End Time] Next Topic/Subsection Title
-- [Summary details for the next segment...]
+#### [Next Start Time - Next End Time] Next Topic/Chapter Title
+- [2–4 concise bullets for the next chapter...]
 
-*(Continue this strict pattern for the entire video)*
+*(Continue this pattern for the entire video)*
 
 ---
 
@@ -497,7 +495,7 @@ Based on the information that follows, generate the summary.
                         });
                     }
 
-                    if (i >= 4 && durationSeconds > 60 && currentRes.lastTimestampSeconds >= Math.max(30, durationSeconds - 120)) {
+                    if (i >= 1 && durationSeconds > 60 && currentRes.lastTimestampSeconds >= Math.max(30, durationSeconds - 120)) {
                         this.sendLog('ResolvedComplete', {
                             reason: 'Reached video end (>= duration - 120s)',
                             segments: currentRes.count,
@@ -782,6 +780,15 @@ ${transcriptText}
 (function () {
     if (window.top !== window.self) return;
 
+    // Clean up any stale buttons or intervals from an earlier extension reload
+    if (window.__ytAiSummarizeInterval__) {
+        clearInterval(window.__ytAiSummarizeInterval__);
+    }
+    const oldStyle = document.getElementById('__yt_ai_summarize_styles__');
+    if (oldStyle) oldStyle.remove();
+    document.querySelectorAll('.yt-ai-summarize-badge').forEach((el) => el.remove());
+    document.querySelectorAll('[data-ai-btn]').forEach((el) => delete el.dataset.aiBtn);
+
     function ensureStyles() {
         if (document.getElementById('__yt_ai_summarize_styles__')) return;
         const style = document.createElement('style');
@@ -791,7 +798,7 @@ ${transcriptText}
                 position: absolute !important;
                 top: 8px !important;
                 left: 8px !important;
-                z-index: 50 !important;
+                z-index: 200 !important;
                 display: inline-flex !important;
                 align-items: center !important;
                 justify-content: center !important;
@@ -813,13 +820,15 @@ ${transcriptText}
                 transform: scale(0.9) !important;
             }
 
-            /* Only show button on hover of the video card or thumbnail */
+            /* Show button on hover of the video card or thumbnail */
             yt-lockup-view-model:hover .yt-ai-summarize-badge,
             ytd-rich-item-renderer:hover .yt-ai-summarize-badge,
             ytd-video-renderer:hover .yt-ai-summarize-badge,
             ytd-grid-video-renderer:hover .yt-ai-summarize-badge,
             ytd-compact-video-renderer:hover .yt-ai-summarize-badge,
+            .yt-lockup-view-model__content-image:hover .yt-ai-summarize-badge,
             .yt-lockup-view-model-wiz__content-image:hover .yt-ai-summarize-badge,
+            yt-thumbnail-view-model:hover .yt-ai-summarize-badge,
             ytd-thumbnail:hover .yt-ai-summarize-badge,
             #thumbnail:hover .yt-ai-summarize-badge {
                 opacity: 0.95 !important;
@@ -828,8 +837,11 @@ ${transcriptText}
                 transform: scale(1) !important;
             }
 
-            .yt-ai-summarize-badge:hover {
+            .yt-ai-summarize-badge:hover,
+            .yt-ai-summarize-badge:focus-visible {
                 opacity: 1 !important;
+                visibility: visible !important;
+                pointer-events: auto !important;
                 background: rgba(15, 23, 42, 1) !important;
                 border-color: #38bdf8 !important;
                 box-shadow: 0 4px 14px rgba(56, 189, 248, 0.5) !important;
@@ -925,19 +937,27 @@ ${transcriptText}
         ensureStyles();
 
         // Query all video card elements across modern & classic YouTube layouts
+        // (do not filter by :not([data-ai-btn]) because YouTube recycles card DOM on scroll/navigation)
         const cards = document.querySelectorAll(
-            'yt-lockup-view-model:not([data-ai-btn]), ' +
-            'ytd-rich-item-renderer:not([data-ai-btn]), ' +
-            'ytd-video-renderer:not([data-ai-btn]), ' +
-            'ytd-grid-video-renderer:not([data-ai-btn]), ' +
-            'ytd-compact-video-renderer:not([data-ai-btn])'
+            'ytd-rich-item-renderer, ' +
+            'ytd-video-renderer, ' +
+            'ytd-grid-video-renderer, ' +
+            'ytd-compact-video-renderer, ' +
+            'yt-lockup-view-model'
         );
 
         cards.forEach((card) => {
+            // If this is an inner yt-lockup-view-model inside a ytd-rich-item-renderer, let the outer card own the single badge
+            if (card.tagName.toLowerCase() === 'yt-lockup-view-model' && card.closest('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer')) {
+                return;
+            }
+
             // Find watch link with valid video ID
             const link = card.querySelector(
                 'a[href*="/watch?v="], ' +
                 'a[href*="watch?v="], ' +
+                'a.yt-lockup-view-model__content-image, ' +
+                'a.yt-lockup-view-model-wiz__content-image, ' +
                 'a.ytLockupMetadataViewModelTitle, ' +
                 'a#video-title-link, ' +
                 'a#video-title, ' +
@@ -952,13 +972,21 @@ ${transcriptText}
             if (!match) return;
             const videoId = match[1];
 
+            // If badge already exists on this card, keep its videoId up-to-date for recycled DOM nodes
+            const existingBtn = card.querySelector('.yt-ai-summarize-badge');
+            if (existingBtn) {
+                existingBtn.dataset.videoId = videoId;
+                return;
+            }
+
             // Find the best thumbnail container to host the top-left overlay badge
             const thumb = card.querySelector(
+                '.yt-lockup-view-model__content-image, ' +
                 '.yt-lockup-view-model-wiz__content-image, ' +
                 '.ytLockupViewModelContentImage, ' +
+                'yt-thumbnail-view-model, ' +
                 'ytd-thumbnail, ' +
                 '#thumbnail, ' +
-                'a.yt-lockup-view-model-wiz__content-image, ' +
                 'a#thumbnail'
             ) || card;
 
@@ -971,18 +999,12 @@ ${transcriptText}
             }
             if (!hostContainer) hostContainer = card;
 
-            // Prevent injecting multiple buttons if child/parent already processed
-            if (hostContainer.querySelector('.yt-ai-summarize-badge') || card.querySelector('.yt-ai-summarize-badge')) {
-                card.dataset.aiBtn = 'true';
-                return;
-            }
-
-            // Only mark card as processed once we actually inject the button
-            card.dataset.aiBtn = 'true';
-
             const btn = document.createElement('button');
+            btn.type = 'button';
             btn.className = 'yt-ai-summarize-badge';
             btn.title = 'Summarize with AI';
+            btn.setAttribute('aria-label', 'Summarize with AI');
+            btn.dataset.videoId = videoId;
 
             const { sparkleSvg, spinnerSvg } = createSvgIcons();
             btn.appendChild(sparkleSvg);
@@ -995,28 +1017,34 @@ ${transcriptText}
                 if (btn.classList.contains('is-loading')) return;
                 btn.classList.add('is-loading');
 
-                const targetUrl = `https://www.youtube.com/watch?v=${videoId}`;
+                const currentVideoId = btn.dataset.videoId || videoId;
+                const titleEl = card.querySelector('a.ytLockupMetadataViewModelTitle, a#video-title-link, a#video-title, #video-title, h3');
+                const videoTitle = (titleEl?.getAttribute('title') || titleEl?.textContent || '').trim();
+                const targetUrl = `https://www.youtube.com/watch?v=${currentVideoId}`;
                 const payload = {
                     type: 'summarizeYouTubeFromHome',
                     videoUrl: targetUrl,
-                    videoId: videoId
+                    videoId: currentVideoId,
+                    videoTitle: videoTitle
                 };
 
+                const done = () => btn.classList.remove('is-loading');
                 if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
-                    chrome.runtime.sendMessage(payload);
+                    chrome.runtime.sendMessage(payload, done);
                 } else if (typeof browser !== 'undefined' && browser.runtime?.sendMessage) {
-                    browser.runtime.sendMessage(payload);
+                    browser.runtime.sendMessage(payload).finally(done);
                 }
 
                 // Automatic safety reset after 6 seconds
-                setTimeout(() => {
-                    btn.classList.remove('is-loading');
-                }, 6000);
+                setTimeout(done, 6000);
             });
 
-            const computedPos = window.getComputedStyle(hostContainer).position;
-            if (computedPos === 'static') {
+            const computedStyle = window.getComputedStyle(hostContainer);
+            if (computedStyle.position === 'static') {
                 hostContainer.style.position = 'relative';
+            }
+            if (computedStyle.display === 'inline') {
+                hostContainer.style.display = 'block';
             }
             hostContainer.appendChild(btn);
         });
@@ -1049,7 +1077,7 @@ ${transcriptText}
     }
 
     injectCardButtons();
-    setInterval(injectCardButtons, 1000);
+    window.__ytAiSummarizeInterval__ = setInterval(injectCardButtons, 1000);
     checkAutoExtract();
     window.addEventListener('yt-navigate-finish', () => {
         setTimeout(injectCardButtons, 500);

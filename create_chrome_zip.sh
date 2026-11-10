@@ -36,6 +36,7 @@ EXCLUDE_PATTERNS=(
     "*.bak"                  # Exclude backup files
     "node_modules/*"         # Exclude node_modules if present
     "summary-article-ext-firefox/*" # Exclude Firefox conversion output dir
+    "agy-sidecar/*"          # Exclude Antigravity sidecar server & scripts
     # Add any other files/folders specific to your setup to exclude
 )
 

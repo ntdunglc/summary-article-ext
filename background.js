@@ -24,9 +24,45 @@ const HANDLERS = {
   aistudio: 'aistudioBot'
 };
 
-// Register context menu for extension icon right-click
-chrome.runtime.onInstalled.addListener(() => {
+const AGY_BRIDGE_URL = 'http://127.0.0.1:8787/api/agy-session';
+
+async function ensureAgyDefaultMigrated() {
+  const res = await chrome.storage.sync.get({ service: 'antigravity', agyMigratedV1: false, agyModel: 'flash' });
+  if (!res.agyMigratedV1) {
+    await chrome.storage.sync.set({ service: 'antigravity', agyModel: res.agyModel || 'flash', agyMigratedV1: true });
+    return 'antigravity';
+  }
+  return (res.service || 'antigravity').toLowerCase();
+}
+async function reinjectYouTubeContentScripts() {
+  try {
+    const tabs = await chrome.tabs.query({ url: ['https://www.youtube.com/*', 'https://m.youtube.com/*'] });
+    for (const tab of tabs) {
+      if (tab.id) {
+        chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ['sites/youtube.js']
+        }).catch(() => {});
+      }
+    }
+  } catch (_) {}
+}
+
+reinjectYouTubeContentScripts();
+
+chrome.runtime.onInstalled.addListener((details) => {
+  reinjectYouTubeContentScripts();
+  chrome.storage.sync.get({ service: 'antigravity', agyMigratedV1: false, agyModel: 'flash' }, (res) => {
+    if (!res.agyMigratedV1) {
+      chrome.storage.sync.set({ service: 'antigravity', agyModel: res.agyModel || 'flash', agyMigratedV1: true });
+    }
+  });
   chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: 'send_to_agy',
+      title: 'Send Prompt to New AGY Session',
+      contexts: ['action']
+    });
     chrome.contextMenus.create({
       id: 'copy_prompt',
       title: 'Copy Prompt',
@@ -39,6 +75,177 @@ chrome.runtime.onInstalled.addListener(() => {
     });
   });
 });
+
+// Helper executed in tab context to show a status toast
+function showPageToast(message, isSuccess = true, isWarning = false, conversationId = null) {
+  const TOAST_ID = '__ai_summarizer_toast__';
+  const existing = document.getElementById(TOAST_ID);
+  if (existing) existing.remove();
+
+  const toast = document.createElement('div');
+  toast.id = TOAST_ID;
+
+  const bgColor = !isSuccess
+    ? 'rgba(127, 29, 29, 0.95)'
+    : isWarning
+      ? 'rgba(45, 30, 10, 0.95)'
+      : 'rgba(24, 24, 27, 0.95)';
+
+  const borderColor = !isSuccess
+    ? '1px solid rgba(239, 68, 68, 0.3)'
+    : isWarning
+      ? '1px solid rgba(245, 158, 11, 0.45)'
+      : '1px solid rgba(255, 255, 255, 0.15)';
+
+  Object.assign(toast.style, {
+    position: 'fixed',
+    top: '20px',
+    right: '20px',
+    zIndex: '2147483647',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '12px 18px',
+    backgroundColor: bgColor,
+    color: '#ffffff',
+    fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    fontSize: '14px',
+    fontWeight: '500',
+    lineHeight: '1.4',
+    borderRadius: '8px',
+    boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
+    border: borderColor,
+    backdropFilter: 'blur(10px)',
+    webkitBackdropFilter: 'blur(10px)',
+    opacity: '0',
+    transform: 'translateY(-10px)',
+    transition: 'opacity 0.25s ease, transform 0.25s ease',
+    pointerEvents: conversationId ? 'auto' : 'none',
+    userSelect: 'none'
+  });
+
+  const iconSvg = !isSuccess
+    ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`
+    : isWarning
+      ? `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+      : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>`;
+
+  const actionHtml = conversationId
+    ? `<a href="antigravity://c/${conversationId}" data-agy-open="${conversationId}" style="margin-left:6px;padding:4px 10px;border-radius:6px;background:rgba(139,92,246,0.25);border:1px solid rgba(167,139,250,0.45);color:#ddd6fe;text-decoration:none;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap;">Open AGY ↗</a>`
+    : '';
+
+  toast.innerHTML = `${iconSvg}<span>${message}</span>${actionHtml}`;
+  if (conversationId) {
+    const btn = toast.querySelector('[data-agy-open]');
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        btn.textContent = 'Opening…';
+        try {
+          chrome.runtime.sendMessage({ type: 'openAgySession', conversationId }, (res) => {
+            if (chrome.runtime.lastError || !res?.ok) {
+              window.location.href = `antigravity://c/${conversationId}`;
+            } else {
+              btn.textContent = 'Opened ✓';
+            }
+          });
+        } catch (_) {
+          window.location.href = `antigravity://c/${conversationId}`;
+        }
+      });
+    }
+  }
+  document.body.appendChild(toast);
+
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateY(0)';
+  });
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(-10px)';
+    setTimeout(() => {
+      if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 300);
+  }, conversationId ? 5500 : 3000);
+}
+
+async function sendPromptToAgySession(message, senderTabId, closeTabAfter = false) {
+  const { agyModel = 'flash' } = await chrome.storage.sync.get({ agyModel: 'flash' });
+  const title =
+    message.videoTitle ||
+    message.articleTitle ||
+    (senderTabId && (await chrome.tabs.get(senderTabId).catch(() => null))?.title?.replace(/\s*-\s*YouTube$/i, '')) ||
+    'Summary';
+
+  let senderTabUrl = message.videoUrl || message.url || '';
+  if (!senderTabUrl && senderTabId) {
+    try {
+      const tab = await chrome.tabs.get(senderTabId);
+      senderTabUrl = tab?.url || '';
+    } catch (_) {}
+  }
+
+  try {
+    const res = await fetch(AGY_BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt: message.text || '',
+        videoId: message.videoId || '',
+        title: title,
+        url: senderTabUrl,
+        model: agyModel
+      })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || `HTTP ${res.status}`);
+    }
+
+    console.log(`%c[Service Worker] ${data.reused ? 'Reused' : 'Started'} AGY session (${data.modelDisplayName || data.model} in ${data.workspace || 'summaries'}): ${data.conversationId}`, 'color: #10b981; font-weight: bold;');
+
+    if (closeTabAfter && senderTabId) {
+      await chrome.tabs.remove(senderTabId).catch(() => {});
+      return true;
+    }
+
+    if (senderTabId) {
+      const isWarning = !!message.hasWarning;
+      const prefix = data.reused ? 'Already in AGY' : 'Sent to AGY';
+      const toastMsg = `${prefix} (${data.workspace || 'summaries'} • Flash)${data.conversationId ? ' • ' + data.conversationId.slice(0, 8) : ''}`;
+      await chrome.scripting.executeScript({
+        target: { tabId: senderTabId },
+        func: showPageToast,
+        args: [toastMsg, true, isWarning, data.conversationId || null]
+      }).catch(() => {});
+
+      await chrome.action.setBadgeText({ text: isWarning ? '!' : '✓', tabId: senderTabId });
+      await chrome.action.setBadgeBackgroundColor({ color: isWarning ? '#f59e0b' : '#10b981', tabId: senderTabId });
+      setTimeout(() => {
+        chrome.action.setBadgeText({ text: '', tabId: senderTabId });
+      }, 2500);
+    }
+    return true;
+  } catch (err) {
+    console.error('Failed to start AGY session:', err);
+    if (senderTabId) {
+      await chrome.scripting.executeScript({
+        target: { tabId: senderTabId },
+        func: showPageToast,
+        args: [`AGY bridge error: ${err.message}`, false, false]
+      }).catch(() => {});
+
+      await chrome.action.setBadgeText({ text: '!', tabId: senderTabId });
+      await chrome.action.setBadgeBackgroundColor({ color: '#ef4444', tabId: senderTabId });
+      setTimeout(() => {
+        chrome.action.setBadgeText({ text: '', tabId: senderTabId });
+      }, 2500);
+    }
+    return false;
+  }
+}
 
 // Helper executed in tab context to copy text & display toast
 function copyToClipboardWithToast(text, label = 'Prompt', isWarning = false) {
@@ -224,7 +431,9 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const targetTab = tab || (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
   if (!targetTab) return;
 
-  if (info.menuItemId === 'copy_prompt') {
+  if (info.menuItemId === 'send_to_agy') {
+    await runExtraction(targetTab, 'send_to_agy');
+  } else if (info.menuItemId === 'copy_prompt') {
     await runExtraction(targetTab, 'copy_prompt');
   } else if (info.menuItemId === 'copy_content') {
     await runExtraction(targetTab, 'copy_content');
@@ -249,6 +458,14 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
     return;
   }
 
+  if (message.type === 'openAgySession' && message.conversationId) {
+    fetch(`http://127.0.0.1:8787/api/open-agy?id=${encodeURIComponent(message.conversationId)}`)
+      .then((r) => r.json())
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+    return true;
+  }
+
   if (message.type === 'checkPendingAction') {
     if (senderTabId) {
       const actionKey = `pendingAction_${senderTabId}`;
@@ -267,6 +484,16 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
 
   if (message.type === 'summarizeYouTubeFromHome') {
     console.log(`%c[Service Worker] Summarize from Home received for URL: ${message.videoUrl}`, 'color: #8b5cf6; font-weight: bold;');
+    const service = await ensureAgyDefaultMigrated();
+    if (service === 'antigravity' || service === 'agy') {
+      await sendPromptToAgySession({
+        videoUrl: message.videoUrl,
+        videoId: message.videoId,
+        videoTitle: message.videoTitle || ''
+      }, senderTabId, false);
+      sendResponse({ ok: true });
+      return true;
+    }
     chrome.tabs.create({
       url: message.videoUrl,
       active: true
@@ -347,37 +574,46 @@ chrome.runtime.onMessage.addListener(async (message, sender, sendResponse) => {
       return;
     }
 
+    if (mode === 'send_to_agy') {
+      await sendPromptToAgySession(message, senderTabId, false);
+      return;
+    }
+
     if (mode === 'summarize_and_replace' || mode === 'summarize_and_replace_running') {
       if (senderTabId) {
-        chrome.storage.sync.get({ service: 'claude' }, (result) => {
-          const service = (result.service || 'claude').toLowerCase();
-          const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
-          console.log(`%c[Service Worker] Navigating Tab ${senderTabId} to AI provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
-          const storageKey = `extractedText_${senderTabId}`;
-          chrome.storage.session.set({ [storageKey]: message.text }, () => {
-            chrome.tabs.update(senderTabId, { url: url });
-          });
+        const service = await ensureAgyDefaultMigrated();
+        if (service === 'antigravity' || service === 'agy') {
+          await sendPromptToAgySession(message, senderTabId, true);
+          return;
+        }
+        const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+        console.log(`%c[Service Worker] Navigating Tab ${senderTabId} to AI provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
+        const storageKey = `extractedText_${senderTabId}`;
+        chrome.storage.session.set({ [storageKey]: message.text }, () => {
+          chrome.tabs.update(senderTabId, { url: url });
         });
       }
       return;
     }
 
     // Default: 'open_tab'
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      chrome.storage.sync.get({ service: 'claude' }, (result) => {
-        const service = (result.service || 'claude').toLowerCase();
-        const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
-        const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
-        console.log(`%c[Service Worker] Opening new AI tab for provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
+    chrome.tabs.query({ active: true, currentWindow: true }, async (tabs) => {
+      const service = await ensureAgyDefaultMigrated();
+      if (service === 'antigravity' || service === 'agy') {
+        await sendPromptToAgySession(message, senderTabId || (tabs && tabs[0]?.id), false);
+        return;
+      }
+      const url = SERVICE_URLS[service] || SERVICE_URLS.claude;
+      const targetIndex = (tabs && tabs[0]) ? tabs[0].index : 0;
+      console.log(`%c[Service Worker] Opening new AI tab for provider (${service}): ${url}`, 'color: #8b5cf6; font-weight: bold;');
 
-        chrome.tabs.create({
-          url: url,
-          index: targetIndex + 1,
-          active: false
-        }, (newTab) => {
-          const storageKey = `extractedText_${newTab.id}`;
-          chrome.storage.session.set({ [storageKey]: message.text });
-        });
+      chrome.tabs.create({
+        url: url,
+        index: targetIndex + 1,
+        active: false
+      }, (newTab) => {
+        const storageKey = `extractedText_${newTab.id}`;
+        chrome.storage.session.set({ [storageKey]: message.text });
       });
     });
   } else if (message.type === 'extractionError') {

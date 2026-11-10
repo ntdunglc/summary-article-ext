@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>YouTube Digest</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA2NCA2NCI+CiAgPGRlZnM+CiAgICA8bGluZWFyR3JhZGllbnQgaWQ9ImciIHgxPSIwIiB5MT0iMCIgeDI9IjEiIHkyPSIxIj4KICAgICAgPHN0b3Agb2Zmc2V0PSIwIiBzdG9wLWNvbG9yPSIjZmY1YTRlIi8+CiAgICAgIDxzdG9wIG9mZnNldD0iMSIgc3RvcC1jb2xvcj0iI2MyMTIxYiIvPgogICAgPC9saW5lYXJHcmFkaWVudD4KICA8L2RlZnM+CiAgPHJlY3Qgd2lkdGg9IjY0IiBoZWlnaHQ9IjY0IiByeD0iMTUiIGZpbGw9InVybCgjZykiLz4KICA8cmVjdCB4PSIxMCIgeT0iMTEiIHdpZHRoPSI0NCIgaGVpZ2h0PSIyOCIgcng9IjgiIGZpbGw9IiNmZmYiLz4KICA8cGF0aCBkPSJNMjggMTguNXYxM2wxMS02LjV6IiBmaWxsPSIjZDYxZjI2Ii8+CiAgPHJlY3QgeD0iMTAiIHk9IjQ0IiB3aWR0aD0iNDQiIGhlaWdodD0iNC41IiByeD0iMi4yNSIgZmlsbD0iI2ZmZiIvPgogIDxyZWN0IHg9IjEwIiB5PSI1MiIgd2lkdGg9IjI4IiBoZWlnaHQ9IjQuNSIgcng9IjIuMjUiIGZpbGw9IiNmZmYiIGZpbGwtb3BhY2l0eT0iLjc1Ii8+Cjwvc3ZnPgo=">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/preload.js"></script>
+</head>
+<body>
+  <div class="layout">
+    <aside class="list-pane">
+      <header class="bar">
+        <div class="bar-title">
+          <strong>YouTube Digest</strong>
+          <span id="status" class="muted" aria-live="polite"></span>
+        </div>
+        <button id="refresh" type="button" class="btn-secondary" title="Check the subscriptions feed now">Check now</button>
+      </header>
+      <div role="tablist" aria-label="Video lists" class="filters">
+        <button role="tab" id="f-done" aria-selected="true" aria-controls="items" data-filter="done">Summaries <span class="count" id="c-done"></span></button>
+        <button role="tab" id="f-queue" aria-selected="false" aria-controls="items" data-filter="queue" tabindex="-1">Queue <span class="count" id="c-queue"></span></button>
+        <button role="tab" id="f-skipped" aria-selected="false" aria-controls="items" data-filter="skipped" tabindex="-1">Skipped <span class="count" id="c-skipped"></span></button>
+      </div>
+      <div id="items" role="tabpanel" aria-labelledby="f-done" class="items"></div>
+      <details class="activity">
+        <summary>Activity log</summary>
+        <pre id="log"></pre>
+      </details>
+    </aside>
+    <main class="report-pane" id="report-pane" hidden>
+      <div class="report-head">
+        <button id="back" type="button" class="btn-secondary back">← Back</button>
+        <div id="report-hero"></div>
+      </div>
+      <article id="report" class="md"></article>
+    </main>
+    <div class="empty-pane" id="empty-pane">Select a summary to read it.</div>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>
