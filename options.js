@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const DEFAULTS = {
     service: "antigravity",
-    agyModel: "flash"
+    agyModel: "hydrogen"
   };
 
   function showStatus(message, color = "green") {
@@ -19,10 +19,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
   const params = new URLSearchParams(window.location.search);
   if (params.get("autoreload") === "1") {
-    chrome.storage.sync.set({ service: "antigravity", agyModel: "flash", agyMigratedV1: true }, () => {
+    chrome.storage.sync.set({ service: "antigravity", agyModel: "hydrogen", agyMigratedV1: true, agyHydrogenMigratedV1: true }, () => {
       providerSelect.value = "antigravity";
-      if (agyModelSelect) agyModelSelect.value = "flash";
-      showStatus("Updated to Antigravity (AGY Session) & reloaded!");
+      if (agyModelSelect) agyModelSelect.value = "hydrogen";
+      showStatus("Updated to Antigravity (Hydrogen 4) & reloaded!");
       setTimeout(() => {
         chrome.runtime.reload();
       }, 250);

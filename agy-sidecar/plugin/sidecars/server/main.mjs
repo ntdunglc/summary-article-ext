@@ -41,7 +41,7 @@ const CFG = {
   maxConcurrentAgents: 3,             // parallel report agents
   reportTimeoutMs: 30 * 60 * 1000,
   selectTimeoutMs: 12 * 60 * 1000,
-  model: 'flash',
+  model: 'hydrogen',
   tz: 'America/New_York',
 };
 
@@ -581,11 +581,26 @@ const DIGEST_URI = `file://${ROOT}`;
 mkdirSync(SUMMARIES_DIR, { recursive: true });
 
 const MODEL_ENUM_MAP = {
-  flash: 'MODEL_PLACEHOLDER_M318',        // Gemini 3.8 Flash (High)
-  flash_high: 'MODEL_PLACEHOLDER_M318',   // Gemini 3.8 Flash (High)
-  flash_medium: 'MODEL_PLACEHOLDER_M319', // Gemini 3.8 Flash (Medium)
-  flash_lite: 'MODEL_PLACEHOLDER_M320',   // Gemini 3.8 Flash (Low)
-  flash_low: 'MODEL_PLACEHOLDER_M320',    // Gemini 3.8 Flash (Low)
+  hydrogen: 'MODEL_PLACEHOLDER_M525',        // Gemini 4 Hydrogen (High)
+  hydrogen_high: 'MODEL_PLACEHOLDER_M525',   // Gemini 4 Hydrogen (High)
+  hydrogen_xhigh: 'MODEL_PLACEHOLDER_M528',  // Gemini 4 Hydrogen (XHigh)
+  hydrogen_medium: 'MODEL_PLACEHOLDER_M526', // Gemini 4 Hydrogen (Medium)
+  hydrogen_low: 'MODEL_PLACEHOLDER_M527',    // Gemini 4 Hydrogen (Low)
+  flash: 'MODEL_PLACEHOLDER_M318',           // Gemini 3.8 Flash (High)
+  flash_high: 'MODEL_PLACEHOLDER_M318',      // Gemini 3.8 Flash (High)
+  flash_medium: 'MODEL_PLACEHOLDER_M319',    // Gemini 3.8 Flash (Medium)
+  flash_lite: 'MODEL_PLACEHOLDER_M320',      // Gemini 3.8 Flash (Low)
+  flash_low: 'MODEL_PLACEHOLDER_M320',       // Gemini 3.8 Flash (Low)
+};
+
+const MODEL_DISPLAY_MAP = {
+  MODEL_PLACEHOLDER_M525: 'Gemini 4 Hydrogen (High)',
+  MODEL_PLACEHOLDER_M528: 'Gemini 4 Hydrogen (XHigh)',
+  MODEL_PLACEHOLDER_M526: 'Gemini 4 Hydrogen (Medium)',
+  MODEL_PLACEHOLDER_M527: 'Gemini 4 Hydrogen (Low)',
+  MODEL_PLACEHOLDER_M318: 'Gemini 3.8 Flash (High)',
+  MODEL_PLACEHOLDER_M319: 'Gemini 3.8 Flash (Medium)',
+  MODEL_PLACEHOLDER_M320: 'Gemini 3.8 Flash (Low)',
 };
 
 async function lsRpc(method, body) {
@@ -760,10 +775,10 @@ async function backfillConversations() {
   }
 }
 
-async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey = 'flash', focusApp = false }) {
+async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey = 'hydrogen', focusApp = false }) {
   const cleanTitle = String(title || 'Summary').trim().replace(/\s+/g, ' ').slice(0, 80);
   const fullTitle = new RegExp(`^${prefix}:\\s*`, 'i').test(cleanTitle) ? cleanTitle : `${prefix}: ${cleanTitle}`;
-  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.flash;
+  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.hydrogen;
   const projectId = await ensureSummariesProject();
   const cascadeId = randomUUID();
 
@@ -823,7 +838,7 @@ async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey 
     workspace: 'summaries',
     model: modelKey,
     modelEnum: planModel,
-    modelDisplayName: 'Gemini 3.8 Flash (High)',
+    modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Hydrogen (High)',
     title: cleanTitle,
     conversationLink: `conversation://${cascadeId}`,
     openAppUrl: `http://127.0.0.1:8787/api/open-agy?id=${encodeURIComponent(cascadeId)}`,
@@ -932,8 +947,9 @@ const agySessionHandler = async (data) => {
   );
   let rawTitle = String(data?.title || state.videos[videoId]?.title || 'Summary').trim().replace(/\s+/g, ' ');
   let title = rawTitle.length > 80 ? rawTitle.slice(0, 80) : rawTitle;
-  const modelKey = ['flash_lite', 'flash_low', 'flash_medium', 'flash_high', 'flash'].includes(data?.model) ? data.model : 'flash';
-  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.flash;
+  const requestedModel = (!data?.model || data?.model === 'flash') ? 'hydrogen' : data.model;
+  const modelKey = Object.prototype.hasOwnProperty.call(MODEL_ENUM_MAP, requestedModel) ? requestedModel : 'hydrogen';
+  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.hydrogen;
   const urlKey = videoId ? `yt:${videoId}` : normalizeUrlKey(sourceUrl) || `title:${normTitle(title)}`;
 
   // Deduplicate unless force=true
@@ -961,7 +977,7 @@ const agySessionHandler = async (data) => {
         workspace: 'summaries',
         model: modelKey,
         modelEnum: planModel,
-        modelDisplayName: 'Gemini 3.8 Flash (High)',
+        modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Hydrogen (High)',
         title,
         conversationLink: `conversation://${existingId}`,
         openAppUrl: `http://127.0.0.1:8787/api/open-agy?id=${encodeURIComponent(existingId)}`,
