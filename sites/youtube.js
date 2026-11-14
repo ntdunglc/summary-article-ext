@@ -8,6 +8,10 @@ Your output must strictly follow the markdown template below. Do not add any int
 - If an explicit \`> [!WARNING]\` banner is provided in the input below (indicating that the transcript is unavailable or severely truncated), include a \`> [!WARNING]\` alert at the top of your summary explaining this limitation, and synthesize the content using the video title, description, chapters, and external URLs.
 - Otherwise, the transcript is complete; do not add disclaimers or mention transcript coverage or missing end seconds.
 
+**Ad & Sponsor Filtering (Strict):**
+- Completely ignore and exclude all advertisements, paid sponsorships, host-read sponsor segments, brand/product integrations, promo codes, affiliate pitches, and channel self-promotion (subscribe/merch/newsletter/Patreon plugs) anywhere in the video or description.
+- **Never mention them at all**—do not create walkthrough sections/timestamps for them, do not summarize them, do not note that an ad or sponsor was skipped or omitted, do not mention sponsor biases under Critical Analysis, and exclude sponsor/affiliate/promo URLs from Footnotes. Treat them as if they do not exist.
+
 ===template===
 ### Video Metadata
 **Title:** [YouTube Video Title]
@@ -43,7 +47,7 @@ Create a **concise, high-signal walkthrough** of the video's major themes so the
 
 **Sectioning & Brevity Rules:**
 - **Major Thematic Chapters Only:** Group the video into broad, meaningful chapters spanning roughly **3–8 minutes each** (aim for **4–6 sections** for a 10–25 min video, **6–9 sections** for a 25–60 min video, and **8–12 sections** for a 60+ min podcast). NEVER slice the video into 1–2 minute micro-segments.
-- **Continuous Coverage:** Keep timestamps contiguous from start to finish (\`[Start Time - End Time]\`), merging adjacent sub-points into a single thematic chapter.
+- **Continuous Coverage (Excluding Ads):** Keep timestamps contiguous across the actual video content (\`[Start Time - End Time]\`), merging adjacent sub-points into a single thematic chapter and silently skipping over any mid-roll/pre-roll sponsor reads without creating a section for them or mentioning them.
 - **Strict Length Cap per Section:** Write **2–4 tight bullet points per section** (1–2 sentences per bullet). Synthesize the core argument, mechanism, or concrete example—omit throat-clearing, anecdotes, and repetition.
 - **Selective Quotes:** Include **at most 1 short verbatim quote** per section, and only when the exact phrasing is memorable or load-bearing.
 - **Strict Heading Format:** Format every section using a Level 4 Markdown heading (\`####\`):

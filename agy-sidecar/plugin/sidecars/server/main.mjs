@@ -352,6 +352,7 @@ INPUTS
 - Transcript + metadata: ${transcriptPath(v.id)} (read it fully; use ByteOffset / StartLine to page through if truncated).
 - Prompt template to follow EXACTLY: the string returned by getPrompt() in ${EXT_JS}. Read it and follow every instruction: all sections in order, no extra intro/outro, walkthrough headings formatted exactly as \`#### [Start - End] Title\`, grouped into broad thematic chapters (4–6 sections for a 10–25 min video, 6–9 for 25–60 min, 8–12 for 60+ min; never 1–2 min micro-slices) with 2–4 concise bullets per section so the walkthrough takes ~10–15% of watching time to read.
 - Use PUBLISH_DATE / VIEWS / DURATION from the file header for the metadata block. Extraction Date: ${new Date().toLocaleString('en-US', { timeZone: CFG.tz })} (America/New_York). Auto-captions often misspell names, products and companies; correct them from context.
+- AD & SPONSOR FILTERING (STRICT): Completely filter out and ignore all ads, paid sponsorships, host-read promos, affiliate/promo codes, and channel plugs (subscribe/merch/newsletter). Never mention ads or sponsors anywhere in the report—do not summarize them, do not give them walkthrough timestamps/sections, do not mention that an ad was skipped, and exclude sponsor/affiliate URLs from Footnotes.
 FACT-CHECK: Use search_web to verify 2-3 significant claims. Source links must be direct canonical URLs (doi.org, arxiv.org/abs, official sites, Wikipedia, publisher article pages). NEVER output vertexaisearch.cloud.google.com redirect URLs or Google search URLs. If you can't get a direct URL, cite the publication by name without a link.
 OUTPUT
 - Write ONLY the markdown report (starting with \`### Video Metadata\`) to ${reportPath(v.id)}
@@ -919,7 +920,7 @@ Create a **concise, high-signal walkthrough** of the video's major themes so the
 
 **Sectioning & Brevity Rules:**
 - **Major Thematic Chapters Only:** Group the video into broad, meaningful chapters spanning roughly **3–8 minutes each** (aim for **4–6 sections** for a 10–25 min video, **6–9 sections** for a 25–60 min video, and **8–12 sections** for a 60+ min podcast). NEVER slice the video into 1–2 minute micro-segments.
-- **Continuous Coverage:** Keep timestamps contiguous from start to finish (\`[Start Time - End Time]\`), merging adjacent sub-points into a single thematic chapter.
+- **Continuous Coverage (Excluding Ads):** Keep timestamps contiguous across the actual video content (\`[Start Time - End Time]\`), merging adjacent sub-points into a single thematic chapter and silently omitting any ads, paid sponsorships, host-read promos, affiliate/promo pitches, and self-promos without mentioning them anywhere in the summary.
 - **Strict Length Cap per Section:** Write **2–4 tight bullet points per section** (1–2 sentences per bullet). Synthesize the core argument, mechanism, or concrete example—omit throat-clearing, anecdotes, and repetition.
 - **Selective Quotes:** Include **at most 1 short verbatim quote** per section, and only when the exact phrasing is memorable or load-bearing.
 - **Strict Heading Format:** Format every section using a Level 4 Markdown heading (\`####\`):
