@@ -289,18 +289,33 @@ function transcriptOk(id) {
 }
 
 const UVX_BIN = existsSync(join(homedir(), '.local', 'bin', 'uvx')) ? join(homedir(), '.local', 'bin', 'uvx') : 'uvx';
+const PYTHON_BIN = existsSync('/usr/bin/python3') ? '/usr/bin/python3' : 'python3';
 const FAST_YT_SCRIPT = join(SCRIPTS, 'fetch_yt_fast.py');
 
-async function fetchYouTubeFast(videoId) {
-  const outPath = transcriptPath(videoId);
-  const { code, out } = await run(UVX_BIN, ['--from', 'youtube-transcript-api', 'python3', FAST_YT_SCRIPT, videoId, outPath], { timeoutMs: 25000 });
-  if (code !== 0) return null;
+function parseFastYtOutput(out) {
   try {
-    const j = JSON.parse(out.trim());
-    return j.ok ? j : null;
+    const j = JSON.parse(String(out || '').trim());
+    return j && typeof j === 'object' ? j : null;
   } catch {
     return null;
   }
+}
+
+async function fetchYouTubeFast(videoId) {
+  const outPath = transcriptPath(videoId);
+  const direct = await run(PYTHON_BIN, [FAST_YT_SCRIPT, videoId, outPath], { timeoutMs: 20000 });
+  const jDirect = parseFastYtOutput(direct.out);
+  if (direct.code === 0 && jDirect?.ok) return jDirect;
+
+  // Fallback to uvx --from youtube-transcript-api if stdlib InnerTube failed
+  const viaUvx = await run(UVX_BIN, ['--from', 'youtube-transcript-api', 'python3', FAST_YT_SCRIPT, videoId, outPath], { timeoutMs: 25000 });
+  const jUvx = parseFastYtOutput(viaUvx.out);
+  if (viaUvx.code === 0 && jUvx?.ok) return jUvx;
+
+  return {
+    ok: false,
+    error: jUvx?.error || jDirect?.error || (viaUvx.err || direct.err || '').trim().slice(0, 300) || 'Transcript unavailable',
+  };
 }
 
 function getYouTubePromptTemplate() {
@@ -1011,7 +1026,7 @@ const agySessionHandler = async (data) => {
   if (videoId && !/<transcript>[\s\S]{100,}<\/transcript>/i.test(prompt)) {
     log(`Fast background transcript fetch for YouTube video ${videoId}...`);
     const ytData = await fetchYouTubeFast(videoId);
-    if (ytData && ytData.transcript) {
+    if (ytData?.ok && ytData.transcript) {
       if (ytData.title && (!data?.title || data.title === 'Summary')) {
         rawTitle = ytData.title.trim().replace(/\s+/g, ' ');
         title = rawTitle.length > 80 ? rawTitle.slice(0, 80) : rawTitle;
@@ -1040,7 +1055,9 @@ Here is the transcript:
 ${ytData.transcript}
 </transcript>`;
     } else if (!prompt) {
-      return { ok: false, error: `Could not fetch transcript for YouTube video ${videoId} (captions may be disabled)` };
+      const reason = String(ytData?.error || 'captions may be disabled').replace(/\s+/g, ' ').slice(0, 140);
+      log(`Fast background transcript fetch failed for ${videoId}: ${reason}`);
+      return { ok: false, error: `Could not fetch transcript for ${videoId}: ${reason}` };
     }
   }
 
