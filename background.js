@@ -26,10 +26,24 @@ const HANDLERS = {
 
 const AGY_BRIDGE_URL = 'http://127.0.0.1:8787/api/agy-session';
 
+const DEFAULT_AGY_MODEL = 'MODEL_PLACEHOLDER_M532'; // Gemini 4 Neon (High)
+
 async function ensureAgyDefaultMigrated() {
-  const res = await chrome.storage.sync.get({ service: 'antigravity', agyMigratedV1: false, agyHydrogenMigratedV1: false, agyModel: 'hydrogen' });
-  if (!res.agyMigratedV1 || !res.agyHydrogenMigratedV1) {
-    await chrome.storage.sync.set({ service: 'antigravity', agyModel: 'hydrogen', agyMigratedV1: true, agyHydrogenMigratedV1: true });
+  const res = await chrome.storage.sync.get({
+    service: 'antigravity',
+    agyMigratedV1: false,
+    agyHydrogenMigratedV1: false,
+    agyNeonMigratedV1: false,
+    agyModel: DEFAULT_AGY_MODEL
+  });
+  if (!res.agyMigratedV1 || !res.agyNeonMigratedV1) {
+    await chrome.storage.sync.set({
+      service: 'antigravity',
+      agyModel: DEFAULT_AGY_MODEL,
+      agyMigratedV1: true,
+      agyHydrogenMigratedV1: true,
+      agyNeonMigratedV1: true
+    });
     return 'antigravity';
   }
   return (res.service || 'antigravity').toLowerCase();
@@ -52,9 +66,21 @@ reinjectYouTubeContentScripts();
 
 chrome.runtime.onInstalled.addListener((details) => {
   reinjectYouTubeContentScripts();
-  chrome.storage.sync.get({ service: 'antigravity', agyMigratedV1: false, agyHydrogenMigratedV1: false, agyModel: 'hydrogen' }, (res) => {
-    if (!res.agyMigratedV1 || !res.agyHydrogenMigratedV1) {
-      chrome.storage.sync.set({ service: 'antigravity', agyModel: 'hydrogen', agyMigratedV1: true, agyHydrogenMigratedV1: true });
+  chrome.storage.sync.get({
+    service: 'antigravity',
+    agyMigratedV1: false,
+    agyHydrogenMigratedV1: false,
+    agyNeonMigratedV1: false,
+    agyModel: DEFAULT_AGY_MODEL
+  }, (res) => {
+    if (!res.agyMigratedV1 || !res.agyNeonMigratedV1) {
+      chrome.storage.sync.set({
+        service: 'antigravity',
+        agyModel: DEFAULT_AGY_MODEL,
+        agyMigratedV1: true,
+        agyHydrogenMigratedV1: true,
+        agyNeonMigratedV1: true
+      });
     }
   });
   chrome.contextMenus.removeAll(() => {
@@ -173,7 +199,7 @@ function showPageToast(message, isSuccess = true, isWarning = false, conversatio
 
 async function sendPromptToAgySession(message, senderTabId, closeTabAfter = false) {
   await ensureAgyDefaultMigrated();
-  const { agyModel = 'hydrogen' } = await chrome.storage.sync.get({ agyModel: 'hydrogen' });
+  const { agyModel = DEFAULT_AGY_MODEL } = await chrome.storage.sync.get({ agyModel: DEFAULT_AGY_MODEL });
   const title =
     message.videoTitle ||
     message.articleTitle ||
@@ -215,7 +241,8 @@ async function sendPromptToAgySession(message, senderTabId, closeTabAfter = fals
     if (senderTabId) {
       const isWarning = !!message.hasWarning;
       const prefix = data.reused ? 'Already in AGY' : 'Sent to AGY';
-      const shortModel = (data.modelDisplayName || '').includes('Hydrogen') ? 'Hydrogen 4' : (data.modelDisplayName || 'Hydrogen 4');
+      const displayName = data.modelDisplayName || 'Gemini 4 Neon (High)';
+      const shortModel = displayName.replace(/^Gemini\s+/i, '');
       const toastMsg = `${prefix} (${data.workspace || 'summaries'} • ${shortModel})${data.conversationId ? ' • ' + data.conversationId.slice(0, 8) : ''}`;
       await chrome.scripting.executeScript({
         target: { tabId: senderTabId },

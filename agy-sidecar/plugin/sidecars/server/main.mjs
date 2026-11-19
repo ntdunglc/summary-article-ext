@@ -41,7 +41,7 @@ const CFG = {
   maxConcurrentAgents: 3,             // parallel report agents
   reportTimeoutMs: 30 * 60 * 1000,
   selectTimeoutMs: 12 * 60 * 1000,
-  model: 'hydrogen',
+  model: 'neon',
   tz: 'America/New_York',
 };
 
@@ -596,7 +596,14 @@ const SUMMARIES_URI = `file://${SUMMARIES_DIR}`;
 const DIGEST_URI = `file://${ROOT}`;
 mkdirSync(SUMMARIES_DIR, { recursive: true });
 
+const DEFAULT_MODEL_ENUM = 'MODEL_PLACEHOLDER_M532'; // Gemini 4 Neon (High)
+
 const MODEL_ENUM_MAP = {
+  neon: 'MODEL_PLACEHOLDER_M532',            // Gemini 4 Neon (High)
+  neon_high: 'MODEL_PLACEHOLDER_M532',       // Gemini 4 Neon (High)
+  neon_xhigh: 'MODEL_PLACEHOLDER_M535',      // Gemini 4 Neon (XHigh)
+  neon_medium: 'MODEL_PLACEHOLDER_M533',     // Gemini 4 Neon (Medium)
+  neon_low: 'MODEL_PLACEHOLDER_M534',        // Gemini 4 Neon (Low)
   hydrogen: 'MODEL_PLACEHOLDER_M525',        // Gemini 4 Hydrogen (High)
   hydrogen_high: 'MODEL_PLACEHOLDER_M525',   // Gemini 4 Hydrogen (High)
   hydrogen_xhigh: 'MODEL_PLACEHOLDER_M528',  // Gemini 4 Hydrogen (XHigh)
@@ -610,6 +617,10 @@ const MODEL_ENUM_MAP = {
 };
 
 const MODEL_DISPLAY_MAP = {
+  MODEL_PLACEHOLDER_M532: 'Gemini 4 Neon (High)',
+  MODEL_PLACEHOLDER_M535: 'Gemini 4 Neon (XHigh)',
+  MODEL_PLACEHOLDER_M533: 'Gemini 4 Neon (Medium)',
+  MODEL_PLACEHOLDER_M534: 'Gemini 4 Neon (Low)',
   MODEL_PLACEHOLDER_M525: 'Gemini 4 Hydrogen (High)',
   MODEL_PLACEHOLDER_M528: 'Gemini 4 Hydrogen (XHigh)',
   MODEL_PLACEHOLDER_M526: 'Gemini 4 Hydrogen (Medium)',
@@ -618,6 +629,42 @@ const MODEL_DISPLAY_MAP = {
   MODEL_PLACEHOLDER_M319: 'Gemini 3.8 Flash (Medium)',
   MODEL_PLACEHOLDER_M320: 'Gemini 3.8 Flash (Low)',
 };
+
+function resolvePlanModel(rawKey) {
+  const key = String(rawKey || '').trim();
+  if (!key) return { modelKey: 'neon', planModel: DEFAULT_MODEL_ENUM };
+  if (/^MODEL_[A-Z0-9_]+$/.test(key)) return { modelKey: key, planModel: key };
+  if (Object.prototype.hasOwnProperty.call(MODEL_ENUM_MAP, key)) {
+    return { modelKey: key, planModel: MODEL_ENUM_MAP[key] };
+  }
+  return { modelKey: 'neon', planModel: DEFAULT_MODEL_ENUM };
+}
+
+async function getAvailableModels() {
+  try {
+    const res = await lsRpc('GetUserStatus', {});
+    const configs = res?.userStatus?.cascadeModelConfigData?.clientModelConfigs || [];
+    const seen = new Set();
+    const models = [];
+    for (const c of configs) {
+      const id = c?.modelOrAlias?.model;
+      const label = c?.label;
+      if (!id || !label || seen.has(id)) continue;
+      seen.add(id);
+      MODEL_DISPLAY_MAP[id] = label;
+      models.push({ id, label });
+    }
+    if (models.length > 0) {
+      return { ok: true, defaultModel: DEFAULT_MODEL_ENUM, models };
+    }
+  } catch {}
+  return {
+    ok: true,
+    defaultModel: DEFAULT_MODEL_ENUM,
+    models: Object.entries(MODEL_DISPLAY_MAP).map(([id, label]) => ({ id, label })),
+  };
+}
+app.api('/api/models', getAvailableModels, 'GET');
 
 async function lsRpc(method, body) {
   const addr = process.env.ANTIGRAVITY_LS_ADDRESS;
@@ -791,10 +838,10 @@ async function backfillConversations() {
   }
 }
 
-async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey = 'hydrogen', focusApp = false }) {
+async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey = 'neon', focusApp = false }) {
   const cleanTitle = String(title || 'Summary').trim().replace(/\s+/g, ' ').slice(0, 80);
   const fullTitle = new RegExp(`^${prefix}:\\s*`, 'i').test(cleanTitle) ? cleanTitle : `${prefix}: ${cleanTitle}`;
-  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.hydrogen;
+  const { planModel } = resolvePlanModel(modelKey);
   const projectId = await ensureSummariesProject();
   const cascadeId = randomUUID();
 
@@ -854,7 +901,7 @@ async function startDirectCascade({ title, prompt, prefix = 'Summary', modelKey 
     workspace: 'summaries',
     model: modelKey,
     modelEnum: planModel,
-    modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Hydrogen (High)',
+    modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Neon (High)',
     title: cleanTitle,
     conversationLink: `conversation://${cascadeId}`,
     openAppUrl: `http://127.0.0.1:8787/api/open-agy?id=${encodeURIComponent(cascadeId)}`,
@@ -963,9 +1010,8 @@ const agySessionHandler = async (data) => {
   );
   let rawTitle = String(data?.title || state.videos[videoId]?.title || 'Summary').trim().replace(/\s+/g, ' ');
   let title = rawTitle.length > 80 ? rawTitle.slice(0, 80) : rawTitle;
-  const requestedModel = (!data?.model || data?.model === 'flash') ? 'hydrogen' : data.model;
-  const modelKey = Object.prototype.hasOwnProperty.call(MODEL_ENUM_MAP, requestedModel) ? requestedModel : 'hydrogen';
-  const planModel = MODEL_ENUM_MAP[modelKey] || MODEL_ENUM_MAP.hydrogen;
+  const requestedModel = (!data?.model || data?.model === 'flash' || data?.model === 'hydrogen') ? 'neon' : data.model;
+  const { modelKey, planModel } = resolvePlanModel(requestedModel);
   const urlKey = videoId ? `yt:${videoId}` : normalizeUrlKey(sourceUrl) || `title:${normTitle(title)}`;
 
   // Deduplicate unless force=true
@@ -993,7 +1039,7 @@ const agySessionHandler = async (data) => {
         workspace: 'summaries',
         model: modelKey,
         modelEnum: planModel,
-        modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Hydrogen (High)',
+        modelDisplayName: MODEL_DISPLAY_MAP[planModel] || 'Gemini 4 Neon (High)',
         title,
         conversationLink: `conversation://${existingId}`,
         openAppUrl: `http://127.0.0.1:8787/api/open-agy?id=${encodeURIComponent(existingId)}`,
@@ -1104,6 +1150,16 @@ app.run().then((srv) => {
         if (req.method === 'OPTIONS') {
           res.writeHead(204);
           res.end();
+          return;
+        }
+        if (req.url?.startsWith('/api/models')) {
+          getAvailableModels().then((result) => {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(result));
+          }).catch((e) => {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ ok: false, error: e.message }));
+          });
           return;
         }
         if (req.url?.startsWith('/api/nav-poll')) {
