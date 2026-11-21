@@ -12,11 +12,11 @@ let lastNavSeq = Date.now() - 2500;
 function navigateAgyConversation(conversationId) {
   if (!conversationId) return;
   if (window.sidecar?.ui?.toggleConversation) {
-    window.sidecar.ui.toggleConversation(conversationId);
+    window.sidecar.ui.toggleConversation(conversationId, { openSidePanel: false });
   } else if (window.parent && window.parent !== window) {
     window.parent.postMessage({
       type: 'toggle-conversation',
-      payload: { conversationId },
+      payload: { conversationId, openSidePanel: false },
     }, '*');
   }
 }
