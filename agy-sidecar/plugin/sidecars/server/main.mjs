@@ -1001,7 +1001,9 @@ Create a **concise, high-signal walkthrough** of the video's major themes so the
 const agySessionHandler = async (data) => {
   const rawPrompt = String(data?.prompt || '').trim();
   const sourceUrl = data?.url || data?.videoUrl || extractSourceUrl(rawPrompt) || '';
-  const videoId = data?.videoId || extractYouTubeId(sourceUrl) || extractYouTubeId(rawPrompt);
+  // Only treat as a YouTube video when videoId is explicitly provided or the page URL itself is YouTube
+  // (never scan arbitrary comment/article bodies for embedded YouTube links).
+  const videoId = data?.videoId || extractYouTubeId(sourceUrl) || null;
   if (!rawPrompt && !videoId) return { ok: false, error: 'Missing prompt or videoId' };
 
   let prompt = rawPrompt.replace(
